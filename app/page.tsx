@@ -1,23 +1,25 @@
 import { supabase } from '@/lib/supabase';
 
-// データの型定義
+interface PlayerDetail {
+  name: string;
+  hits: number;
+  hr: number;
+}
+
 interface RankingRow {
   high_school: string;
   total_hits: number;
   total_hr: number;
   total_rbi: number;
-  player_count: number;
+  players: PlayerDetail[]; // 誰が打ったかのリストを追加
 }
 
-export const revalidate = 3600; // 1時間ごとにページを再生成（キャッシュ有効化）
+export const revalidate = 0; // 常に最新データを取得するように変更
 
 export default async function Home() {
-  // 1. Supabaseから「今日の全成績」と「選手情報」を取得
-  // 本来は結合(Join)が理想ですが、分かりやすく2回に分けて取得してプログラムで合体させます
   const { data: performance } = await supabase.from('daily_performance').select('*');
-  const { data: players } = await supabase.from('players').select('player_id, high_school');
+  const { data: players } = await supabase.from('players').select('player_id, name, high_school');
 
-  // 2. データを高校ごとに集計する
   const schoolStats: Record<string, RankingRow> = {};
 
   performance?.forEach((perf) => {
@@ -32,73 +34,73 @@ export default async function Home() {
         total_hits: 0,
         total_hr: 0,
         total_rbi: 0,
-        player_count: 0, // その高校から何人安打が出たか（任意）
+        players: [],
       };
     }
 
     schoolStats[school].total_hits += perf.h_hits;
     schoolStats[school].total_hr += perf.h_hr;
     schoolStats[school].total_rbi += perf.h_rbi;
+
+    // 安打を打った選手をリストに追加
+    if (perf.h_hits > 0 || perf.h_hr > 0) {
+      schoolStats[school].players.push({
+        name: player.name,
+        hits: perf.h_hits,
+        hr: perf.h_hr,
+      });
+    }
   });
 
-  // 3. 安打数順に並び替え
   const ranking = Object.values(schoolStats).sort((a, b) => b.total_hits - a.total_hits);
 
   return (
-    <main className="min-h-screen bg-gray-50 p-4 md:p-8">
+    <main className="min-h-screen bg-slate-50 p-4 md:p-8">
       <div className="max-w-4xl mx-auto">
-        <header className="mb-8 text-center">
-          <h1 className="text-3xl font-bold text-blue-900 mb-2">
-            ⚾️ プロ野球 出身校別デイリーランキング
+        <header className="mb-8">
+          <h1 className="text-3xl font-black text-slate-900 border-l-8 border-blue-600 pl-4">
+            BASEBALL SCHOOL RANKING
           </h1>
-          <p className="text-gray-600">本日の全試合の合計成績を集計しています</p>
+          <p className="text-slate-500 mt-2 ml-3">本日のプロ野球 出身校別安打数まとめ</p>
         </header>
 
-        <div className="bg-white rounded-xl shadow-lg overflow-hidden">
-          <table className="w-full text-left">
-            <thead className="bg-blue-900 text-white">
-              <tr>
-                <th className="px-6 py-4">順位</th>
-                <th className="px-6 py-4">出身校</th>
-                <th className="px-6 py-4 text-center">安打</th>
-                <th className="px-6 py-4 text-center">本塁打</th>
-                <th className="px-6 py-4 text-center">打点</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {ranking.map((item, index) => (
-                <tr key={item.high_school} className="hover:bg-blue-50 transition-colors">
-                  <td className="px-6 py-4 font-bold text-lg text-gray-700">
-                    {index + 1}位
-                  </td>
-                  <td className="px-6 py-4 font-medium text-gray-900">
-                    {item.high_school}
-                  </td>
-                  <td className="px-6 py-4 text-center font-bold text-blue-600">
-                    {item.total_hits}
-                  </td>
-                  <td className="px-6 py-4 text-center font-bold text-red-500">
-                    {item.total_hr}
-                  </td>
-                  <td className="px-6 py-4 text-center text-gray-600">
-                    {item.total_rbi}
-                  </td>
-                </tr>
-              ))}
-              {ranking.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-6 py-10 text-center text-gray-500">
-                    本日の試合データはまだありません
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+        <div className="space-y-4">
+          {ranking.map((item, index) => (
+            <details key={item.high_school} className="group bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+              <summary className="flex items-center justify-between p-4 cursor-pointer hover:bg-slate-50 list-none">
+                <div className="flex items-center gap-4">
+                  <span className="text-2xl font-black text-slate-300 w-8">#{index + 1}</span>
+                  <div>
+                    <h2 className="text-xl font-bold text-slate-800">{item.high_school}</h2>
+                    <p className="text-sm text-slate-400">{item.players.length}名が活躍</p>
+                  </div>
+                </div>
+                <div className="flex gap-6 text-center">
+                  <div>
+                    <p className="text-xs text-slate-400 uppercase font-bold">Hits</p>
+                    <p className="text-2xl font-black text-blue-600">{item.total_hits}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400 uppercase font-bold">HR</p>
+                    <p className="text-2xl font-black text-red-500">{item.total_hr}</p>
+                  </div>
+                </div>
+              </summary>
+              
+              <div className="px-14 pb-4 pt-2 bg-slate-50 border-t border-slate-100">
+                <p className="text-xs font-bold text-slate-400 mb-2">活躍した選手：</p>
+                <div className="flex flex-wrap gap-2">
+                  {item.players.map((p, i) => (
+                    <span key={i} className="bg-white border border-slate-200 px-3 py-1 rounded-full text-sm shadow-sm">
+                      <span className="font-bold text-slate-700">{p.name}</span>
+                      <span className="ml-2 text-slate-400 text-xs">{p.hits}H {p.hr > 0 && ` / ${p.hr}HR`}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </details>
+          ))}
         </div>
-        
-        <footer className="mt-8 text-center text-sm text-gray-400">
-          Data provided by Yahoo! Japan Sports / Scraped automatically
-        </footer>
       </div>
     </main>
   );
