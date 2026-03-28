@@ -1,95 +1,131 @@
 import { supabase } from '@/lib/supabase';
 
+interface PlayerDetail {
+  name: string;
+  hits: number;
+  hr: number;
+}
+
 interface RankingRow {
   high_school: string;
   total_hits: number;
   total_hr: number;
   total_rbi: number;
+  players: PlayerDetail[];
 }
 
-// 常に最新データを取得する設定
 export const revalidate = 0;
 
 export default async function Home() {
-  // 1. Supabaseからデータを取得
-  const { data: performance, error: perfError } = await supabase.from('daily_performance').select('*');
-  const { data: players, error: playerError } = await supabase.from('players').select('player_id, high_school');
+  // 1. まず、DBにある最新の日付を1件だけ取得して「表示対象日」を決める
+  const { data: latestEntry } = await supabase
+    .from('daily_performance')
+    .select('date')
+    .order('date', { ascending: false })
+    .limit(1);
 
-  // 2. データを高校ごとに集計
+  const targetDate = latestEntry?.[0]?.date || "";
+
+  // 2. その日付のデータだけを取得
+  const { data: performance } = await supabase
+    .from('daily_performance')
+    .select('*')
+    .eq('date', targetDate);
+
+  const { data: players } = await supabase.from('players').select('player_id, name, high_school');
+
+  // 3. 集計
   const schoolStats: Record<string, RankingRow> = {};
 
   if (performance && players) {
     performance.forEach((perf) => {
-      // player_id が一致する選手を探す
       const player = players.find((p) => String(p.player_id) === String(perf.player_id));
       if (!player || !player.high_school) return;
 
       const school = player.high_school;
-
       if (!schoolStats[school]) {
         schoolStats[school] = {
           high_school: school,
           total_hits: 0,
           total_hr: 0,
           total_rbi: 0,
+          players: [],
         };
       }
 
-      schoolStats[school].total_hits += (perf.h_hits || 0);
-      schoolStats[school].total_hr += (perf.h_hr || 0);
-      schoolStats[school].total_rbi += (perf.h_rbi || 0);
+      schoolStats[school].total_hits += perf.h_hits;
+      schoolStats[school].total_hr += perf.h_hr;
+      schoolStats[school].total_rbi += perf.h_rbi;
+
+      // 誰が打ったかの内訳を追加
+      schoolStats[school].players.push({
+        name: player.name,
+        hits: perf.h_hits,
+        hr: perf.h_hr
+      });
     });
   }
 
-  // 安打数順に並び替え
   const ranking = Object.values(schoolStats).sort((a, b) => b.total_hits - a.total_hits);
 
   return (
-    <main className="min-h-screen bg-white p-4 md:p-8 text-slate-900">
+    <main className="min-h-screen bg-slate-50 p-4 md:p-8 text-slate-900">
       <div className="max-w-4xl mx-auto">
         <header className="mb-8 border-b-2 border-blue-900 pb-4">
           <h1 className="text-2xl font-bold text-blue-900">
             ⚾️ プロ野球 出身校別デイリーランキング
           </h1>
-          <p className="text-slate-600 text-sm mt-1">本日の全試合の合計成績（自動更新）</p>
+          <div className="flex justify-between items-end mt-2">
+            <p className="text-slate-600 text-sm">本日の全試合の合計成績（自動更新）</p>
+            {targetDate && (
+              <span className="bg-blue-100 text-blue-800 text-xs font-bold px-3 py-1 rounded-full">
+                対象日: {targetDate}
+              </span>
+            )}
+          </div>
         </header>
 
-        {/* 診断用メッセージ（データがない場合のみ表示） */}
+        <div className="space-y-3">
+          {ranking.map((item, index) => (
+            <details key={item.high_school} className="group bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+              <summary className="flex items-center justify-between p-4 cursor-pointer hover:bg-slate-50 list-none">
+                <div className="flex items-center gap-4">
+                  <span className="text-xl font-black text-slate-300 w-8">{index + 1}</span>
+                  <h2 className="text-lg font-bold text-slate-800">{item.high_school}</h2>
+                </div>
+                <div className="flex gap-8 text-right">
+                  <div>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase">Hits</p>
+                    <p className="text-xl font-black text-blue-600">{item.total_hits}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase">HR</p>
+                    <p className="text-xl font-black text-red-500">{item.total_hr}</p>
+                  </div>
+                </div>
+              </summary>
+              
+              <div className="px-12 pb-4 pt-2 bg-slate-50 border-t border-slate-100">
+                <p className="text-xs font-bold text-slate-400 mb-2 italic">ー 活躍した選手の内訳</p>
+                <div className="flex flex-wrap gap-2">
+                  {item.players.map((p, i) => (
+                    <div key={i} className="bg-white border border-slate-200 px-3 py-1 rounded shadow-sm text-sm">
+                      <span className="font-bold text-slate-700">{p.name}</span>
+                      <span className="ml-2 text-blue-600 font-medium">{p.hits}H</span>
+                      {p.hr > 0 && <span className="ml-1 text-red-500 font-medium">({p.hr}HR)</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </details>
+          ))}
+        </div>
+        
         {ranking.length === 0 && (
-          <div className="bg-amber-50 border border-amber-200 p-4 rounded-lg mb-6 text-sm text-amber-800">
-            <p className="font-bold">⚠️ データが表示されない原因のヒント:</p>
-            <ul className="list-disc ml-5 mt-1">
-              <li>DBの成績データ数: {performance?.length || 0} 件</li>
-              <li>登録選手数: {players?.length || 0} 件</li>
-              <li>{performance?.length === 0 ? "今日の試合データがまだSupabaseに保存されていません。GitHub Actionsのログを確認してください。" : "成績データはありますが、選手名簿（playersテーブル）のIDと一致していません。"}</li>
-            </ul>
+          <div className="text-center py-20 text-slate-400">
+            データがありません。スクレイピングを実行してください。
           </div>
         )}
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-100 border-b-2 border-slate-200">
-                <th className="px-4 py-3 font-bold">順位</th>
-                <th className="px-4 py-3 font-bold">出身校</th>
-                <th className="px-4 py-3 text-center font-bold">安打</th>
-                <th className="px-4 py-3 text-center font-bold">本塁打</th>
-                <th className="px-4 py-3 text-center font-bold">打点</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ranking.map((item, index) => (
-                <tr key={item.high_school} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="px-4 py-4 text-slate-500">{index + 1}位</td>
-                  <td className="px-4 py-4 font-bold">{item.high_school}</td>
-                  <td className="px-4 py-4 text-center font-bold text-blue-600 text-lg">{item.total_hits}</td>
-                  <td className="px-4 py-4 text-center font-bold text-red-500">{item.total_hr}</td>
-                  <td className="px-4 py-4 text-center text-slate-600">{item.total_rbi}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
       </div>
     </main>
   );
