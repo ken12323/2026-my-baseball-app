@@ -15,7 +15,6 @@ export async function GET(request: Request) {
     const jstNow = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Tokyo"}));
     const todayStr = `${jstNow.getFullYear()}-${String(jstNow.getMonth() + 1).padStart(2, '0')}-${String(jstNow.getDate()).padStart(2, '0')}`; 
 
-    // --- 1. 試合URLの取得（より正確に） ---
     const scheduleUrl = `https://baseball.yahoo.co.jp/npb/schedule/?date=${todayStr}`;
     const { data: scheduleHtml } = await axios.get(scheduleUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
     const $sched = cheerio.load(scheduleHtml);
@@ -23,7 +22,6 @@ export async function GET(request: Request) {
     const gameUrls: string[] = [];
     $sched('a').each((_, el) => {
       const href = $sched(el).attr('href') || '';
-      // /game/数字/ という形式のURLだけを狙い撃ち
       if (href.match(/\/game\/\d+\//)) {
         const gameId = href.match(/\/game\/(\d+)\//)?.[1];
         const statsUrl = `https://baseball.yahoo.co.jp/npb/game/${gameId}/stats`;
@@ -31,7 +29,6 @@ export async function GET(request: Request) {
       }
     });
 
-    // --- 2. 選手名簿の準備 ---
     const { data: allPlayers } = await supabase.from('players').select('*');
     const playerMap = new Map();
     allPlayers?.forEach(p => {
@@ -40,46 +37,56 @@ export async function GET(request: Request) {
     });
 
     const statsAggregator: Record<string, any> = {};
-    const anyNamesFound: string[] = []; // デバッグ用：とにかく見つけた名前
 
-    // --- 3. 各試合の解析（より広い範囲を検索） ---
     for (const url of gameUrls) {
       try {
         const { data: gameHtml } = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 5000 });
         const $ = cheerio.load(gameHtml);
 
-        // テーブルの行(tr)をすべて見て、中に「/player/数字/」のリンクがあるものを探す
-        $('tr').each((_, row) => {
-          const playerLink = $(row).find('a[href*="/player/"]');
-          if (playerLink.length > 0) {
-            const nameOnPage = playerLink.first().text().trim().replace(/\s+/g, '');
-            if (nameOnPage && !anyNamesFound.includes(nameOnPage)) anyNamesFound.push(nameOnPage);
+        $('.bb-statsTable').each((_, table) => {
+          const headerText = $(table).find('thead').text();
+          
+          // 【重要】投手のテーブル（投球回、防御率などを含む）は無視する
+          if (headerText.includes('投球回') || headerText.includes('防御率') || headerText.includes('奪三振')) {
+            return; 
+          }
+          
+          // 打撃成績のテーブル（打数や打点を含む）だけを処理
+          if (!headerText.includes('打数')) return;
 
-            if (playerMap.has(nameOnPage)) {
-              const pInfo = playerMap.get(nameOnPage);
-              const cells = $(row).find('td');
-              
-              // Yahooの標準: 4=安打, 5=打点, 6=本塁打
-              const hits = parseInt($(cells[4]).text()) || 0;
-              const rbi  = parseInt($(cells[5]).text()) || 0;
-              const hr   = parseInt($(cells[6]).text()) || 0;
+          $(table).find('tr.bb-statsTable__row').each((__, row) => {
+            const playerLink = $(row).find('a[href*="/player/"]');
+            if (playerLink.length > 0) {
+              const nameOnPage = playerLink.first().text().trim().replace(/\s+/g, '');
 
-              if (hits > 0 || hr > 0 || rbi > 0) {
-                const id = pInfo.player_id || pInfo.id;
-                if (!statsAggregator[id]) {
-                  statsAggregator[id] = { player_id: id, player_name: nameOnPage, date: todayStr, h_hits: 0, h_hr: 0, h_rbi: 0 };
+              if (playerMap.has(nameOnPage)) {
+                const pInfo = playerMap.get(nameOnPage);
+                const cells = $(row).find('td');
+                
+                // 打撃成績の列: 安打(4), 打点(5), 本塁打(6)
+                const hits = parseInt($(cells[4]).text()) || 0;
+                const rbi  = parseInt($(cells[5]).text()) || 0;
+                const hr   = parseInt($(cells[6]).text()) || 0;
+
+                if (hits > 0 || hr > 0 || rbi > 0) {
+                  const id = pInfo.player_id || pInfo.id;
+                  if (!statsAggregator[id]) {
+                    statsAggregator[id] = { player_id: id, player_name: nameOnPage, date: todayStr, h_hits: 0, h_hr: 0, h_rbi: 0 };
+                  }
+                  statsAggregator[id].h_hits += hits;
+                  statsAggregator[id].h_hr += hr;
+                  statsAggregator[id].h_rbi += rbi;
                 }
-                statsAggregator[id].h_hits += hits;
-                statsAggregator[id].h_hr += hr;
-                statsAggregator[id].h_rbi += rbi;
               }
             }
-          }
+          });
         });
       } catch (e) { continue; }
     }
 
     const finalData = Object.values(statsAggregator);
+    
+    // データを上書き保存（前の「投手混じりのデータ」を消してから入れる）
     if (finalData.length > 0) {
       await supabase.from('daily_performance').delete().eq('date', todayStr);
       await supabase.from('daily_performance').insert(finalData);
@@ -88,11 +95,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ 
       success: true, 
       date: todayStr, 
-      games_checked: gameUrls.length, 
-      matched_count: finalData.length,
-      sample_names_on_page: anyNamesFound.slice(0, 15), // 見つけた名前を15人分表示
-      db_player_count: allPlayers?.length || 0,
-      first_game_url: gameUrls[0]
+      count: finalData.length,
+      status: "Pitcher stats excluded successfully"
     });
 
   } catch (error: any) {

@@ -50,6 +50,8 @@
 
     実行URLの形: https://[サイト名].vercel.app/api/scrape?key=playball
 
+    https://2026-my-baseball-app.vercel.app/api/scrape?key=playball
+
     もし合言葉が一致しない場合、プログラムは「Unauthorized（拒否）」を返します。
 
 4. 1年後の自分が「修正・更新」したくなったら
