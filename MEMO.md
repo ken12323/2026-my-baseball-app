@@ -18,6 +18,8 @@
 
     .env.local にSupabaseへの接続キーを隠して保存。
 
+    npm run dev をターミナルにうちローカルでサイトを確認
+
 ② データベース準備 (Supabase)
 
     players テーブル（選手名、母校名、所属チーム）を作成。
