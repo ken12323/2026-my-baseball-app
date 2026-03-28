@@ -1,77 +1,104 @@
 import { supabase } from '@/lib/supabase';
-import Link from 'next/link';
 
-export default async function Home({
-  searchParams,
-}: {
-  searchParams: Promise<{ query?: string; team?: string }>;
-}) {
-  const params = await searchParams;
-  const query = params.query || '';
-  const team = params.team || '';
+// データの型定義
+interface RankingRow {
+  high_school: string;
+  total_hits: number;
+  total_hr: number;
+  total_rbi: number;
+  player_count: number;
+}
 
-  // Supabaseからデータを取得（検索条件を反映）
-  let dbQuery = supabase
-    .from('players')
-    .select('player_id, player_name, team_name, position_detail');
+export const revalidate = 3600; // 1時間ごとにページを再生成（キャッシュ有効化）
 
-  if (query) {
-    dbQuery = dbQuery.ilike('player_name', `%${query}%`);
-  }
-  if (team) {
-    dbQuery = dbQuery.eq('team_name', team);
-  }
+export default async function Home() {
+  // 1. Supabaseから「今日の全成績」と「選手情報」を取得
+  // 本来は結合(Join)が理想ですが、分かりやすく2回に分けて取得してプログラムで合体させます
+  const { data: performance } = await supabase.from('daily_performance').select('*');
+  const { data: players } = await supabase.from('players').select('player_id, high_school');
 
-  const { data: players, error } = await dbQuery.limit(50); // 最初は50件表示
+  // 2. データを高校ごとに集計する
+  const schoolStats: Record<string, RankingRow> = {};
 
-  const teams = [
-    "阪神タイガース", "広島東洋カープ", "横浜DeNAベイスターズ", "読売ジャイアンツ", "東京ヤクルトスワローズ", "中日ドラゴンズ",
-    "オリックス・バファローズ", "千葉ロッテマリーンズ", "福岡ソフトバンクホークス", "東北楽天ゴールデンイーグルス", "埼玉西武ライオンズ", "北海道日本ハムファイターズ"
-  ];
+  performance?.forEach((perf) => {
+    const player = players?.find((p) => p.player_id === perf.player_id);
+    if (!player || !player.high_school) return;
+
+    const school = player.high_school;
+
+    if (!schoolStats[school]) {
+      schoolStats[school] = {
+        high_school: school,
+        total_hits: 0,
+        total_hr: 0,
+        total_rbi: 0,
+        player_count: 0, // その高校から何人安打が出たか（任意）
+      };
+    }
+
+    schoolStats[school].total_hits += perf.h_hits;
+    schoolStats[school].total_hr += perf.h_hr;
+    schoolStats[school].total_rbi += perf.h_rbi;
+  });
+
+  // 3. 安打数順に並び替え
+  const ranking = Object.values(schoolStats).sort((a, b) => b.total_hits - a.total_hits);
 
   return (
-    <main className="min-h-screen bg-gray-50 p-5 md:p-10 text-black">
+    <main className="min-h-screen bg-gray-50 p-4 md:p-8">
       <div className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold text-center mb-8 text-blue-900">NPB 選手データベース</h1>
+        <header className="mb-8 text-center">
+          <h1 className="text-3xl font-bold text-blue-900 mb-2">
+            ⚾️ プロ野球 出身校別デイリーランキング
+          </h1>
+          <p className="text-gray-600">本日の全試合の合計成績を集計しています</p>
+        </header>
 
-        {/* 検索・絞り込みフォーム */}
-        <form className="bg-white p-6 rounded-xl shadow-md mb-8 grid grid-cols-1 md:grid-cols-3 gap-4">
-          <input
-            type="text"
-            name="query"
-            placeholder="選手名を入力..."
-            defaultValue={query}
-            className="border p-2 rounded w-full bg-white"
-          />
-          <select name="team" defaultValue={team} className="border p-2 rounded w-full bg-white">
-            <option value="">全球団</option>
-            {teams.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <button type="submit" className="bg-blue-600 text-white font-bold py-2 px-4 rounded hover:bg-blue-700 transition">
-            検索・絞り込み
-          </button>
-        </form>
-
-        {/* 選手リスト */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {players?.map((player) => (
-            <Link 
-              key={player.player_id} 
-              href={`/player/${player.player_id}`}
-              className="block p-4 bg-white border border-gray-200 rounded-lg shadow-sm hover:border-blue-400 hover:shadow-md transition"
-            >
-              <div className="flex justify-between items-center">
-                <div>
-                  <p className="text-sm text-gray-500">{player.team_name}</p>
-                  <h2 className="text-xl font-bold">{player.player_name}</h2>
-                </div>
-                <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">
-                  {player.position_detail}
-                </span>
-              </div>
-            </Link>
-          ))}
+        <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+          <table className="w-full text-left">
+            <thead className="bg-blue-900 text-white">
+              <tr>
+                <th className="px-6 py-4">順位</th>
+                <th className="px-6 py-4">出身校</th>
+                <th className="px-6 py-4 text-center">安打</th>
+                <th className="px-6 py-4 text-center">本塁打</th>
+                <th className="px-6 py-4 text-center">打点</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {ranking.map((item, index) => (
+                <tr key={item.high_school} className="hover:bg-blue-50 transition-colors">
+                  <td className="px-6 py-4 font-bold text-lg text-gray-700">
+                    {index + 1}位
+                  </td>
+                  <td className="px-6 py-4 font-medium text-gray-900">
+                    {item.high_school}
+                  </td>
+                  <td className="px-6 py-4 text-center font-bold text-blue-600">
+                    {item.total_hits}
+                  </td>
+                  <td className="px-6 py-4 text-center font-bold text-red-500">
+                    {item.total_hr}
+                  </td>
+                  <td className="px-6 py-4 text-center text-gray-600">
+                    {item.total_rbi}
+                  </td>
+                </tr>
+              ))}
+              {ranking.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-6 py-10 text-center text-gray-500">
+                    本日の試合データはまだありません
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
+        
+        <footer className="mt-8 text-center text-sm text-gray-400">
+          Data provided by Yahoo! Japan Sports / Scraped automatically
+        </footer>
       </div>
     </main>
   );
