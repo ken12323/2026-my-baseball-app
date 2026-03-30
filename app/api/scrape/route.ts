@@ -4,6 +4,8 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 
 export async function GET(request: Request) {
+  const logs: string[] = [];
+
   try {
     const { searchParams } = new URL(request.url);
     const key = searchParams.get('key');
@@ -11,98 +13,106 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // 1. 日付の決定
     const now = new Date();
     const jstNow = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Tokyo"}));
-    const todayUrlStr = `${jstNow.getFullYear()}${String(jstNow.getMonth() + 1).padStart(2, '0')}${String(jstNow.getDate()).padStart(2, '0')}`;
+    const dateParam = searchParams.get('date');
+    const targetDate = dateParam || jstNow.toISOString().split('T')[0];
     
-    const manualDate = searchParams.get('date')?.replace(/-/g, '');
-    const scheduleUrl = `https://baseball.yahoo.co.jp/npb/schedule/?date=${manualDate || todayUrlStr}`;
-    
-    const { data: scheduleHtml } = await axios.get(scheduleUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-    const $sched = cheerio.load(scheduleHtml);
+    // 【修正ポイント】ご提示いただいた1軍(first)のURL構造に合わせる
+    const scheduleUrl = `https://baseball.yahoo.co.jp/npb/schedule/first/all?date=${targetDate}`;
+    logs.push(`Accessing: ${scheduleUrl}`);
+
+    const res = await axios.get(scheduleUrl, { 
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } 
+    });
+    const $sched = cheerio.load(res.data);
     
     const gameUrls: string[] = [];
     $sched('a').each((_, el) => {
       const href = $sched(el).attr('href') || '';
-      if (href.match(/\/game\/\d+\//)) {
-        const gameId = href.match(/\/game\/(\d+)\//)?.[1];
-        const statsUrl = `https://baseball.yahoo.co.jp/npb/game/${gameId}/stats`;
+      // /game/数字/ というリンクを抽出
+      const gameMatch = href.match(/\/game\/(\d+)\//);
+      if (gameMatch) {
+        const statsUrl = `https://baseball.yahoo.co.jp/npb/game/${gameMatch[1]}/stats`;
         if (!gameUrls.includes(statsUrl)) gameUrls.push(statsUrl);
       }
     });
 
-    const { data: allPlayers } = await supabase.from('players').select('*');
+    if (gameUrls.length === 0) {
+      return NextResponse.json({ success: true, message: "No games found.", date: targetDate, url: scheduleUrl });
+    }
+
+    logs.push(`Found ${gameUrls.length} games. Processing...`);
+
+    const { data: players } = await supabase.from('players').select('*');
     const playerMap = new Map();
-    allPlayers?.forEach(p => {
-      const name = p.player_name || p.name || '';
-      playerMap.set(name.replace(/\s+/g, ''), p);
-    });
+    players?.forEach(p => playerMap.set((p.player_name || p.name).replace(/\s+/g, ''), p));
 
     const statsByDate: Record<string, any> = {};
 
     for (const url of gameUrls) {
       try {
-        const { data: gameHtml } = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 5000 });
-        const $ = cheerio.load(gameHtml);
+        const gameRes = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+        const $ = cheerio.load(gameRes.data);
+        
+        const title = $('title').text();
+        const dMatch = title.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+        if (!dMatch) continue;
+        const actualDate = `${dMatch[1]}-${dMatch[2].padStart(2, '0')}-${dMatch[3].padStart(2, '0')}`;
 
-        const pageTitle = $('title').text();
-        const dateMatch = pageTitle.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
-        if (!dateMatch) continue;
-        const gameDate = `${dateMatch[1]}-${dateMatch[2].padStart(2, '0')}-${dateMatch[3].padStart(2, '0')}`;
-
-        if (!statsByDate[gameDate]) statsByDate[gameDate] = {};
+        if (!statsByDate[actualDate]) statsByDate[actualDate] = {};
 
         $('.bb-statsTable').each((_, table) => {
-          const headers: string[] = [];
-          $(table).find('thead th').each((i, el) => { headers.push($(el).text().trim()); });
+          const ths: string[] = [];
+          $(table).find('thead th').each((__, th) => { ths.push($(th).text().trim()); });
+          
+          // 列番号の特定 (安打、本塁打、打点)
+          const hitIdx = ths.indexOf('安打');
+          const hrIdx  = ths.indexOf('本塁打');
+          const rbiIdx = ths.indexOf('打点');
 
-          // 投手用テーブルは無視
-          if (headers.includes('防御率') || !headers.includes('打数')) return;
+          // 打撃成績テーブル（打数あり）かつ投手成績（防御率なし）を対象に
+          if (hitIdx === -1 || ths.includes('防御率') || !ths.includes('打数')) return;
 
-          // 【重要】正しい列番号を自動で探す
-          const hitIdx = headers.indexOf('安打');
-          const hrIdx  = headers.indexOf('本塁打');
-          const rbiIdx = headers.indexOf('打点');
+          $(table).find('tr.bb-statsTable__row').each((___, row) => {
+            const pLink = $(row).find('a[href*="/player/"]');
+            if (pLink.length > 0) {
+              const name = pLink.text().trim().replace(/\s+/g, '');
+              const pInfo = playerMap.get(name);
+              if (pInfo) {
+                const tds = $(row).find('td');
+                const h = parseInt($(tds[hitIdx]).text()) || 0;
+                const hr = parseInt($(tds[hrIdx]).text()) || 0;
+                const r = parseInt($(tds[rbiIdx]).text()) || 0;
 
-          $(table).find('tr.bb-statsTable__row').each((__, row) => {
-            const playerLink = $(row).find('a[href*="/player/"]');
-            if (playerLink.length > 0) {
-              const nameOnPage = playerLink.first().text().trim().replace(/\s+/g, '');
-              if (playerMap.has(nameOnPage)) {
-                const pInfo = playerMap.get(nameOnPage);
-                const cells = $(row).find('td');
-                
-                // 動的に見つけた列番号から数字を取得
-                const hits = parseInt($(cells[hitIdx]).text()) || 0;
-                const hr   = parseInt($(cells[hrIdx]).text()) || 0;
-                const rbi  = parseInt($(cells[rbiIdx]).text()) || 0;
-
-                if (hits > 0 || hr > 0 || rbi > 0) {
+                if (h > 0 || hr > 0 || r > 0) {
                   const id = pInfo.player_id || pInfo.id;
-                  if (!statsByDate[gameDate][id]) {
-                    statsByDate[gameDate][id] = { player_id: id, player_name: nameOnPage, date: gameDate, h_hits: 0, h_hr: 0, h_rbi: 0 };
+                  if (!statsByDate[actualDate][id]) {
+                    statsByDate[actualDate][id] = { player_id: id, player_name: name, date: actualDate, h_hits: 0, h_hr: 0, h_rbi: 0 };
                   }
-                  statsByDate[gameDate][id].h_hits += hits;
-                  statsByDate[gameDate][id].h_hr += hr;
-                  statsByDate[gameDate][id].h_rbi += rbi;
+                  statsByDate[actualDate][id].h_hits += h;
+                  statsByDate[actualDate][id].h_hr += hr;
+                  statsByDate[actualDate][id].h_rbi += r;
                 }
               }
             }
           });
         });
-      } catch (e) { continue; }
+      } catch (err) { continue; }
     }
 
+    let updatedCount = 0;
     for (const d of Object.keys(statsByDate)) {
-      const finalData = Object.values(statsByDate[d]);
-      if (finalData.length > 0) {
-        await supabase.from('daily_performance').delete().eq('date', d);
-        await supabase.from('daily_performance').insert(finalData);
-      }
+      const data = Object.values(statsByDate[d]);
+      await supabase.from('daily_performance').delete().eq('date', d);
+      await supabase.from('daily_performance').insert(data);
+      updatedCount += data.length;
     }
 
-    return NextResponse.json({ success: true, processed_dates: Object.keys(statsByDate) });
+    return NextResponse.json({ success: true, date: targetDate, players: updatedCount, logs });
+
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message, logs }, { status: 500 });
   }
 }
