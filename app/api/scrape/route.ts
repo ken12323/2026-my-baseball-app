@@ -45,23 +45,24 @@ export async function GET(request: Request) {
         const { data: gameHtml } = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 5000 });
         const $ = cheerio.load(gameHtml);
 
-        // 【改良】タブのタイトル（<title>タグ）から日付を抽出
-        // 例: "2026年3月27日 オリックス・バファローズ対..."
         const pageTitle = $('title').text();
         const dateMatch = pageTitle.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
-        
         if (!dateMatch) continue;
-
-        const year = dateMatch[1];
-        const month = dateMatch[2].padStart(2, '0');
-        const day = dateMatch[3].padStart(2, '0');
-        const gameDate = `${year}-${month}-${day}`; // 正確な YYYY-MM-DD
+        const gameDate = `${dateMatch[1]}-${dateMatch[2].padStart(2, '0')}-${dateMatch[3].padStart(2, '0')}`;
 
         if (!statsByDate[gameDate]) statsByDate[gameDate] = {};
 
         $('.bb-statsTable').each((_, table) => {
-          const tableHeader = $(table).find('thead').text();
-          if (tableHeader.includes('防御率') || !tableHeader.includes('打数')) return;
+          const headers: string[] = [];
+          $(table).find('thead th').each((i, el) => { headers.push($(el).text().trim()); });
+
+          // 投手用テーブルは無視
+          if (headers.includes('防御率') || !headers.includes('打数')) return;
+
+          // 【重要】正しい列番号を自動で探す
+          const hitIdx = headers.indexOf('安打');
+          const hrIdx  = headers.indexOf('本塁打');
+          const rbiIdx = headers.indexOf('打点');
 
           $(table).find('tr.bb-statsTable__row').each((__, row) => {
             const playerLink = $(row).find('a[href*="/player/"]');
@@ -70,9 +71,11 @@ export async function GET(request: Request) {
               if (playerMap.has(nameOnPage)) {
                 const pInfo = playerMap.get(nameOnPage);
                 const cells = $(row).find('td');
-                const hits = parseInt($(cells[4]).text()) || 0;
-                const rbi  = parseInt($(cells[5]).text()) || 0;
-                const hr   = parseInt($(cells[6]).text()) || 0;
+                
+                // 動的に見つけた列番号から数字を取得
+                const hits = parseInt($(cells[hitIdx]).text()) || 0;
+                const hr   = parseInt($(cells[hrIdx]).text()) || 0;
+                const rbi  = parseInt($(cells[rbiIdx]).text()) || 0;
 
                 if (hits > 0 || hr > 0 || rbi > 0) {
                   const id = pInfo.player_id || pInfo.id;
@@ -90,25 +93,15 @@ export async function GET(request: Request) {
       } catch (e) { continue; }
     }
 
-    let totalInserted = 0;
-    const datesProcessed = Object.keys(statsByDate);
-
-    for (const d of datesProcessed) {
+    for (const d of Object.keys(statsByDate)) {
       const finalData = Object.values(statsByDate[d]);
       if (finalData.length > 0) {
         await supabase.from('daily_performance').delete().eq('date', d);
         await supabase.from('daily_performance').insert(finalData);
-        totalInserted += finalData.length;
       }
     }
 
-    return NextResponse.json({ 
-      success: true, 
-      processed_dates: datesProcessed,
-      total_count: totalInserted,
-      method: "Extracted from page title (YYYY年MM月DD日)"
-    });
-
+    return NextResponse.json({ success: true, processed_dates: Object.keys(statsByDate) });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
