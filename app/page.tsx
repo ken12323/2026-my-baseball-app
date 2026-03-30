@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase';
 
-type Period = 'today' | 'weekly' | 'season';
+// 期間とカテゴリーの定義
+type Period = 'today' | 'yesterday' | 'weekly' | 'season';
 type Category = 'high_school' | 'university' | 'prev_team' | 'draft_year' | 'hometown';
 
 interface RankingRow {
@@ -17,17 +18,33 @@ export default async function Home({ searchParams }: { searchParams: { period?: 
   const period = searchParams.period || 'today';
   const category = searchParams.cat || 'high_school';
 
+  // --- 📅 日付の計算ロジック ---
   const now = new Date();
   const jstNow = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Tokyo"}));
+  
   const todayStr = jstNow.toISOString().split('T')[0];
   
-  // 1. 期間によるクエリ切り替え
+  const yesterday = new Date(jstNow);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+  const weekAgo = new Date(jstNow);
+  weekAgo.setDate(weekAgo.getDate() - 7);
+  const weekAgoStr = weekAgo.toISOString().split('T')[0];
+
+  // 【ここが修正ポイント！】表示に使う日付を決定
+  let targetDate = todayStr;
+  if (period === 'yesterday') targetDate = yesterdayStr;
+
+  // --- 1. Supabaseからデータを取得 ---
   let query = supabase.from('daily_performance').select('*');
-  if (period === 'today') query = query.eq('date', todayStr);
-  else if (period === 'weekly') {
-    const weekAgo = new Date(jstNow);
-    weekAgo.setDate(weekAgo.getDate() - 7);
-    query = query.gte('date', weekAgo.toISOString().split('T')[0]);
+
+  if (period === 'today') {
+    query = query.eq('date', todayStr);
+  } else if (period === 'yesterday') {
+    query = query.eq('date', yesterdayStr);
+  } else if (period === 'weekly') {
+    query = query.gte('date', weekAgoStr);
   }
 
   const [{ data: performance }, { data: players }] = await Promise.all([
@@ -35,6 +52,7 @@ export default async function Home({ searchParams }: { searchParams: { period?: 
     supabase.from('players').select('*')
   ]);
 
+  // --- 2. 集計ロジック ---
   const stats: Record<string, RankingRow> = {};
 
   if (performance && players) {
@@ -42,14 +60,12 @@ export default async function Home({ searchParams }: { searchParams: { period?: 
       const player = players.find((p) => String(p.player_id) === String(perf.player_id));
       if (!player) return;
 
-      // --- 🚀 全経歴・多次元集計ロジック ---
       let keys: string[] = [];
       if (category === 'high_school') {
         keys.push(player.high_school || '経歴なし(外国人/中退など)');
       } else if (category === 'university') {
         if (player.university) keys.push(player.university);
       } else if (category === 'prev_team') {
-        // 社会人・独立・他、全ての経歴を計上
         if (player.prev_team_1) keys.push(player.prev_team_1);
         if (player.prev_team_2) keys.push(player.prev_team_2);
         if (player.prev_team_3) keys.push(player.prev_team_3);
@@ -95,7 +111,9 @@ export default async function Home({ searchParams }: { searchParams: { period?: 
             <h1 className="text-3xl font-black text-blue-900 italic tracking-tighter">
               BASEBALL <span className="text-red-600">ROOTS</span>
             </h1>
-            <span className="text-[10px] font-bold text-slate-400 border border-slate-200 px-2 py-1 rounded">2026 SEASON</span>
+            <span className="text-[10px] font-bold text-slate-400 border border-slate-200 px-2 py-1 rounded tracking-widest uppercase">
+              {period === 'season' ? 'Season All' : period === 'weekly' ? 'Last 7 Days' : targetDate}
+            </span>
           </div>
           
           <nav className="flex flex-wrap gap-1.5">
@@ -113,9 +131,9 @@ export default async function Home({ searchParams }: { searchParams: { period?: 
           </nav>
 
           <div className="mt-4 flex bg-slate-100 p-1 rounded-xl">
-            {(['today', 'weekly', 'season'] as Period[]).map(p => (
-              <a key={p} href={getUrl(p, category)} className={`flex-1 text-center py-2 rounded-lg text-[10px] font-black uppercase tracking-tighter ${period === p ? 'bg-white text-blue-900 shadow-sm' : 'text-slate-400'}`}>
-                {p === 'today' ? 'DAILY' : p === 'weekly' ? 'WEEKLY' : 'SEASON'}
+            {(['today', 'yesterday', 'weekly', 'season'] as Period[]).map(p => (
+              <a key={p} href={getUrl(p, category)} className={`flex-1 text-center py-2 rounded-lg text-[10px] font-black uppercase tracking-tighter transition-all ${period === p ? 'bg-white text-blue-900 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
+                {p === 'today' ? '今日' : p === 'yesterday' ? '昨日' : p === 'weekly' ? '週間' : '通算'}
               </a>
             ))}
           </div>
@@ -143,7 +161,7 @@ export default async function Home({ searchParams }: { searchParams: { period?: 
                 </div>
               </summary>
               <div className="px-16 pb-6 pt-2 bg-slate-50 border-t border-slate-100">
-                <p className="text-[9px] font-bold text-slate-400 mb-3 tracking-widest">CONTRIBUTING PLAYERS</p>
+                <p className="text-[9px] font-bold text-slate-400 mb-3 tracking-widest uppercase">Contributing Players</p>
                 <div className="flex flex-wrap gap-2">
                   {item.players.sort((a,b)=>b.hits - a.hits).map(p => (
                     <div key={p.name} className="bg-white border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm text-xs flex items-center gap-2">
@@ -157,6 +175,18 @@ export default async function Home({ searchParams }: { searchParams: { period?: 
               </div>
             </details>
           ))}
+
+          {ranking.length === 0 && (
+            <div className="text-center py-24 bg-white rounded-2xl border-2 border-dashed border-slate-200">
+              <p className="text-slate-400 text-sm font-bold">
+                {period === 'today' ? "本日の試合データはまだありません。" : "表示するデータが見つかりませんでした。"}
+              </p>
+              <div className="mt-4 flex justify-center gap-2">
+                <a href={getUrl('yesterday', category)} className="text-[10px] bg-blue-50 text-blue-600 px-3 py-1 rounded-full font-bold">昨日の結果を見る</a>
+                <a href={getUrl('season', category)} className="text-[10px] bg-slate-50 text-slate-500 px-3 py-1 rounded-full font-bold">通算成績を見る</a>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </main>
