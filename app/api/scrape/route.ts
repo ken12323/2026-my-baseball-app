@@ -19,17 +19,18 @@ export async function GET(request: Request) {
     const targetDate = dateParam || jstNow.toISOString().split('T')[0];
     
     const scheduleUrl = `https://baseball.yahoo.co.jp/npb/schedule/first/all?date=${targetDate}`;
-    logs.push(`Target URL: ${scheduleUrl}`);
+    logs.push(`Accessing: ${scheduleUrl}`);
 
     const res = await axios.get(scheduleUrl, { 
       headers: { 'User-Agent': 'Mozilla/5.0' }
     });
 
-    const $ = cheerio.load(res.data); // ここを「$」に統一しました
-    
+    const $ = cheerio.load(res.data);
     const gameIds = new Set<string>();
-    // 型エラー防止のため :any を追加
-    $('a.bb-score__content').each((_: any, el: any) => {
+
+    // 【ここが最重要！】
+    // ページ内にある「最初の」bb-scoreTable（＝1軍の試合一覧）の中だけを探索します
+    $('.bb-scoreTable').first().find('a.bb-score__content').each((_: any, el: any) => {
       const href = $(el).attr('href') || '';
       const match = href.match(/\/game\/(\d+)\//);
       if (match) {
@@ -38,7 +39,7 @@ export async function GET(request: Request) {
     });
 
     const gameUrls = Array.from(gameIds).map(id => `https://baseball.yahoo.co.jp/npb/game/${id}/stats`);
-    logs.push(`Total Games: ${gameUrls.length}`); 
+    logs.push(`Unique 1-Gun Games: ${gameUrls.length}`); // ここが 6 になれば成功！
 
     if (gameUrls.length === 0) {
       return NextResponse.json({ success: true, message: "No games found.", logs });
@@ -67,7 +68,6 @@ export async function GET(request: Request) {
         $game('.bb-statsTable').each((_: any, table: any) => {
           const ths: string[] = [];
           $game(table).find('thead th').each((__: any, th: any) => { ths.push($game(th).text().trim()); });
-          
           const hitIdx = ths.indexOf('安打');
           const hrIdx  = ths.indexOf('本塁打');
           const rbiIdx = ths.indexOf('打点');
