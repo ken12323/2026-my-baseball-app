@@ -6,7 +6,9 @@ on:
     - cron: '0 8 * * *'
     # 2. 22:00 JST (ナイター終了目安)
     - cron: '0 13 * * *'
-    # 3. 00:00 JST (延長戦・深夜の最終確定用)
+
+    # 3. 毎日 00:00 (日本時間) = 15:00 (UTC)
+    # 延長戦や深夜の最終データ確定に対応
     - cron: '0 15 * * *'
     
   workflow_dispatch: # いつでも手動で実行可能
@@ -18,15 +20,15 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # --- STEP 1: スクレイピング実行 (生データの収集) ---
+      # --- STEP 1: スクレイピング実行 (Next.js APIを叩く) ---
       - name: Trigger Scraper API
         run: |
           curl -X GET "${{ secrets.SITE_URL }}/api/scrape?key=${{ secrets.CRON_SECRET }}"
-          echo "Scraping completed for daily_performance table."
+          echo "Daily scraping step completed."
 
       # --- STEP 2: Python環境のセットアップ ---
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           
@@ -34,7 +36,8 @@ jobs:
         run: |
           pip install supabase httpx
 
-      # --- STEP 3: 分析実行 (WARの計算とマスタ更新) ---
+      # --- STEP 3: 分析実行 (WARの計算とDB更新) ---
+      # ※ main.py がルートディレクトリにある前提です
       - name: Run Sabermetrics Analysis
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
