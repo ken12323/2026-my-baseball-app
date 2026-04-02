@@ -1,4 +1,4 @@
-name: Nightly Baseball Scrape
+name: Daily Baseball Update Pipeline (Scrape & Analyze)
 
 on:
   schedule:
@@ -9,13 +9,41 @@ on:
     # 2. 毎日 22:00 (日本時間) = 13:00 (UTC)
     # ナイター試合の最終結果に対応
     - cron: '0 13 * * *'
+
+    # 3. 毎日 00:00 (日本時間) = 15:00 (UTC)
+    # 延長戦や深夜の最終データ確定に対応
+    - cron: '0 15 * * *'
     
   workflow_dispatch: # 手動実行ボタン
 
 jobs:
-  scrape:
+  pipeline:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # --- STEP 1: スクレイピング実行 (Next.js APIを叩く) ---
       - name: Trigger Scraper API
         run: |
-          curl -X GET "${{ secrets.SCRAPE_URL }}"
+          curl -X GET "${{ secrets.SITE_URL }}/api/scrape?key=${{ secrets.CRON_SECRET }}"
+          echo "Daily scraping step completed."
+
+      # --- STEP 2: Python環境のセットアップ ---
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install supabase httpx
+
+      # --- STEP 3: 分析実行 (WARの計算とDB更新) ---
+      # ※ main.py がルートディレクトリにある前提です
+      - name: Run Sabermetrics Analysis
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python main.py
