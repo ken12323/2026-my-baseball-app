@@ -23,14 +23,22 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # --- STEP 1: スクレイピング実行 (VercelのAPIを叩いてDBを最新にする) ---
+      # --- STEP 1: スクレイピング実行 (昨日と今日の2日分を念のため叩く) ---
       - name: Trigger Scraper API
         run: |
-          echo "Triggering Vercel Scraper API..."
-          curl -X GET "${{ secrets.SITE_URL }}/api/scrape?key=${{ secrets.CRON_SECRET }}"
-          echo "API trigger requested. Waiting 20 seconds for Supabase to sync..."
-          sleep 20 # 重要：API側のDB書き込みが終わるまで少し待つ
+          echo "Fetching Yesterday's data..."
+          # 日本時間の「昨日」の日付を計算してAPIに送る
+          YESTERDAY=$(date -d "9 hours ago -1 day" +%Y-%m-%d)
+          curl -X GET "${{ secrets.SITE_URL }}/api/scrape?key=${{ secrets.CRON_SECRET }}&date=$YESTERDAY"
+          
+          echo "Waiting for DB sync..."
+          sleep 10
 
+          echo "Fetching Today's data..."
+          curl -X GET "${{ secrets.SITE_URL }}/api/scrape?key=${{ secrets.CRON_SECRET }}"
+          
+          echo "API trigger completed. Waiting 20 seconds for final sync..."
+          sleep 20
       # --- STEP 2: Python環境のセットアップ ---
       - name: Set up Python
         uses: actions/setup-python@v5
