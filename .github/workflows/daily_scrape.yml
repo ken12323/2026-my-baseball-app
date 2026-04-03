@@ -6,25 +6,30 @@ on:
     - cron: '0 8 * * *'
     # 2. 22:00 JST (ナイター終了目安)
     - cron: '0 13 * * *'
-
-    # 3. 毎日 00:00 (日本時間) = 15:00 (UTC)
-    # 延長戦や深夜の最終データ確定に対応
+    # 3. 翌0:00 JST (深夜のデータ最終確定)
     - cron: '0 15 * * *'
     
-  workflow_dispatch: # いつでも手動で実行可能
+  workflow_dispatch: # 手動実行用
 
 jobs:
   pipeline:
     runs-on: ubuntu-latest
+    
+    # 2026年のGitHub環境で警告を出さないための設定
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # --- STEP 1: スクレイピング実行 (Next.js APIを叩く) ---
+      # --- STEP 1: スクレイピング実行 (VercelのAPIを叩いてDBを最新にする) ---
       - name: Trigger Scraper API
         run: |
+          echo "Triggering Vercel Scraper API..."
           curl -X GET "${{ secrets.SITE_URL }}/api/scrape?key=${{ secrets.CRON_SECRET }}"
-          echo "Daily scraping step completed."
+          echo "API trigger requested. Waiting 20 seconds for Supabase to sync..."
+          sleep 20 # 重要：API側のDB書き込みが終わるまで少し待つ
 
       # --- STEP 2: Python環境のセットアップ ---
       - name: Set up Python
@@ -36,8 +41,7 @@ jobs:
         run: |
           pip install supabase httpx
 
-      # --- STEP 3: 分析実行 (WARの計算とDB更新) ---
-      # ※ main.py がルートディレクトリにある前提です
+      # --- STEP 3: 分析実行 (最新になった daily_performance を元に再計算) ---
       - name: Run Sabermetrics Analysis
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
