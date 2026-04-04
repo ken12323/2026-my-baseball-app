@@ -54,13 +54,14 @@ def scrape_team(team_name, team_id, mode="battingstats"):
     for table in tables:
         thead = table.find("thead")
         if not thead: continue
-        cols = [th.text.strip() for th in thead.find_all("th")]
         
-        # 「選手名」が何番目の列にあるか探す (投手と野手で位置が違う対策)
+        # 【修正】全角スペースや半角スペースを完全に除去してカラム名を統一
+        cols = [th.text.strip().replace('\u3000', '').replace(' ', '') for th in thead.find_all("th")]
+        
         try:
             name_idx = cols.index("選手名")
         except ValueError:
-            continue # 選手名がないテーブルはスキップ
+            continue
         
         tbody = table.find("tbody")
         if not tbody: continue
@@ -89,7 +90,7 @@ def scrape_team(team_name, team_id, mode="battingstats"):
                 c_name = cols[i]
                 val = td.text.strip().replace('-', '0')
                 
-                # --- 重要: DBのカラム名に合わせるマッピング ---
+                # 特殊なマッピング対応
                 if c_name == "与四球": c_name = "四球"
                 if c_name == "与死球": c_name = "死球"
                 
@@ -116,7 +117,6 @@ def calculate_metrics(batters, pitchers):
         hbp = b.get("死球", 0)
         tb = b.get("塁打", 0)
 
-        # サイトから取得できていない場合に計算
         if b.get("出塁率", 0) == 0 and pa > 0:
             b["出塁率"] = round((h + bb + hbp) / pa, 3)
         if b.get("長打率", 0) == 0 and ab > 0:
@@ -157,7 +157,6 @@ def main():
     print(f"🚀 書き込み開始 (野手:{len(all_batters)}, 投手:{len(all_pitchers)})")
     
     try:
-        # Supabaseの制限を回避するため小分けにしてアップロード
         if all_batters:
             for i in range(0, len(all_batters), 50):
                 supabase.table("batting_stats").upsert(all_batters[i:i+50], on_conflict="player_id,年度").execute()
