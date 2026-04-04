@@ -23,7 +23,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # --- STEP 1: スクレイピング実行 (昨日と今日の2日分を念のため叩く) ---
+      # --- STEP 1: スクレイピング実行 (SNS拡散用・今日の速報データをAPI経由で取得) ---
       - name: Trigger Scraper API
         run: |
           echo "Fetching Yesterday's data..."
@@ -39,7 +39,8 @@ jobs:
           
           echo "API trigger completed. Waiting 20 seconds for final sync..."
           sleep 20
-      # --- STEP 2: Python環境のセットアップ ---
+
+      # --- STEP 2: Python環境のセットアップとライブラリのインストール ---
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -47,10 +48,12 @@ jobs:
           
       - name: Install Dependencies
         run: |
-          pip install supabase httpx
+          python -m pip install --upgrade pip
+          # requirements.txt に記載された全てのライブラリ(bs4, requests, supabase)を一括インストール
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      # --- STEP 3: 分析実行 (最新になった daily_performance を元に再計算) ---
-      - name: Run Sabermetrics Analysis
+      # --- STEP 3: 公式通算成績の同期 (打席数・WARなどの完全なデータを反映) ---
+      - name: Run Official Stats Sync
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
