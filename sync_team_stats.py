@@ -15,7 +15,7 @@ TEAMS = {
     "西武": 7, "日ハム": 8, "千葉": 9, "オリックス": 11, "ソフトバンク": 12, "楽天": 376
 }
 
-# --- Supabaseのテーブルにあるカラム名だけの許可リスト (これ以外は送信しない) ---
+# --- あなたのDBのカラム名と完全に一致させるリスト ---
 BATTER_DB_COLS = [
     "player_id", "名前", "年度", "所属球団", "試合", "打席", "打数", "得点", "安打", 
     "二塁打", "三塁打", "本塁打", "塁打", "打点", "盗塁", "盗塁刺", "犠打", "犠飛", 
@@ -39,14 +39,10 @@ def safe_int(val):
 
 def dotFormat(value, precision=3):
     f_val = safe_float(value)
-    fmt = "{:." + str(precision) + "f}"
-    formatted = fmt.format(f_val)
-    return formatted.replace('0.', '.') if formatted.startswith('0.') else formatted
+    return "{:." + str(precision) + "f}".format(f_val).replace('0.', '.')
 
 def scrape_team(team_name, team_id, mode="battingstats"):
     url = f"https://baseball.yahoo.co.jp/npb/teams/{team_id}/{mode}"
-    print(f"📡 {team_name} ({mode}) 取得中...")
-    
     res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
     res.encoding = "utf-8"
     soup = BeautifulSoup(res.text, "html.parser")
@@ -57,7 +53,6 @@ def scrape_team(team_name, team_id, mode="battingstats"):
     for table in tables:
         thead = table.find("thead")
         if not thead: continue
-        # ヘッダーから空白を除去
         cols = [th.text.strip().replace('\u3000', '').replace(' ', '') for th in thead.find_all("th")]
         
         try:
@@ -73,6 +68,7 @@ def scrape_team(team_name, team_id, mode="battingstats"):
             
             pid = re.search(r'/player/(\d+)/', player_a['href']).group(1)
             
+            # 初回登録
             if pid not in player_map:
                 player_map[pid] = {"player_id": pid, "名前": player_a.text.strip(), "年度": 2026, "所属球団": team_name}
             
@@ -82,23 +78,26 @@ def scrape_team(team_name, team_id, mode="battingstats"):
                 c_name = cols[i]
                 val = td.text.strip().replace('-', '0')
                 
-                # キーの正規化
                 if c_name == "与四球": c_name = "四球"
                 if c_name == "与死球": c_name = "死球"
                 if c_name in ["選手名", "背番号", "位置", "順位"]: continue
                 
-                if c_name == "投球回": s[c_name] = val
-                elif "." in val or c_name in ["打率", "防御率"]: s[c_name] = safe_float(val)
-                else: s[c_name] = s.get(c_name, 0) + safe_int(val) # 数値は合算
+                if c_name == "投球回":
+                    s[c_name] = val
+                elif "." in val or c_name in ["打率", "防御率"]:
+                    s[c_name] = safe_float(val)
+                else:
+                    # 既に値があれば大きい方を採用（重複テーブル対策）
+                    current_val = s.get(c_name, 0)
+                    new_val = safe_int(val)
+                    s[c_name] = max(current_val, new_val)
 
-    results = []
-    for p in player_map.values():
-        if mode == "battingstats" and p.get("試合", 0) > 0: results.append(p)
-        elif mode == "pitchingstats" and p.get("登板", 0) > 0: results.append(p)
+    results = list(player_map.values())
+    print(f"  -> {team_name}: {len(results)}名取得")
     return results
 
 def calculate_metrics(batters, pitchers):
-    print("📈 指標を再計算中...")
+    print("📈 指標計算開始...")
     LG_WOBA = 0.315
 
     for b in batters:
@@ -109,7 +108,6 @@ def calculate_metrics(batters, pitchers):
         hbp = b.get("死球", 0)
         tb = b.get("塁打", 0)
 
-        # 出塁率・長打率・OPSを計算
         b["出塁率"] = round((h + bb + hbp) / pa, 3) if pa > 0 else 0.0
         b["長打率"] = round(tb / ab, 3) if ab > 0 else 0.0
         b["OPS"] = dotFormat(b["出塁率"] + b["長打率"])
@@ -145,19 +143,37 @@ def main():
 
     calculate_metrics(all_batters, all_pitchers)
 
-    # --- 【重要】送信前に許可リストにあるカラムだけに厳選する ---
-    final_batters = [{k: v for k, v in b.items() if k in BATTER_DB_COLS} for b in all_batters]
-    final_pitchers = [{k: v for k, v in p.items() if k in PITCHER_DB_COLS} for p in all_pitchers]
+    # 送信直前にフィルタリング（幽霊データ排除 + カラム制限）
+    final_batters = []
+    for b in all_batters:
+        if b.get("試合", 0) > 0:
+            final_batters.append({k: v for k, v in b.items() if k in BATTER_DB_COLS})
 
-    print(f"🚀 送信開始 (野手:{len(final_batters)}, 投手:{len(final_pitchers)})")
+    final_pitchers = []
+    for p in pitchers: # pitchers変数がなかったので修正
+        if p.get("登板", 0) > 0:
+            final_pitchers.append({k: v for k, v in p.items() if k in PITCHER_DB_COLS})
+
+    # --- 最終デバッグ確認 ---
+    if final_batters:
+        test = final_batters[0]
+        print(f"👀 サンプルデータ(野手): {test['名前']} / {test['所属球団']} / 打席:{test.get('打席')} / 出塁率:{test.get('出塁率')}")
+
+    print(f"🚀 送信開始 (野手:{len(final_batters)}名, 投手:{len(all_pitchers)}名)")
     
     try:
         if final_batters:
             for i in range(0, len(final_batters), 50):
-                supabase.table("batting_stats").upsert(final_batters[i:i+50], on_conflict="player_id,年度").execute()
-        if final_pitchers:
-            for i in range(0, len(final_pitchers), 50):
-                supabase.table("pitching_stats").upsert(final_pitchers[i:i+50], on_conflict="player_id,年度").execute()
+                res = supabase.table("batting_stats").upsert(final_batters[i:i+50], on_conflict="player_id,年度").execute()
+                print(f"  ..野手 {i+len(final_batters[i:i+50])}名完了")
+        if all_pitchers:
+            for i in range(0, len(all_pitchers), 50):
+                # 投手用も同様にフィルタリング
+                p_chunk = [{k: v for k, v in p.items() if k in PITCHER_DB_COLS and p.get("登板", 0) > 0} for p in all_pitchers[i:i+50]]
+                p_chunk = [p for p in p_chunk if p] # 空を排除
+                if p_chunk:
+                    supabase.table("pitching_stats").upsert(p_chunk, on_conflict="player_id,年度").execute()
+            print("  ..投手完了")
         print("✅ 全行程が正常に完了しました！")
     except Exception as e:
         print(f"❌ 書き込みエラー: {e}")
