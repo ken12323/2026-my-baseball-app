@@ -15,10 +15,25 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# 12球団URL設定
 TEAMS = {
     "巨人": 1, "ヤクルト": 2, "横浜": 3, "中日": 4, "阪神": 5, "広島": 6,
     "西武": 7, "日ハム": 8, "千葉": 9, "オリックス": 11, "ソフトバンク": 12, "楽天": 376
 }
+
+# --- 重要：Supabaseのテーブルにあるカラム名だけの「許可リスト」 ---
+# ここにない項目（失策、得点圏など）は自動的に無視されます
+ALLOWED_BATTER_COLS = [
+    "player_id", "名前", "年度", "所属球団", "試合", "打席", "打数", "得点", "安打", 
+    "二塁打", "三塁打", "本塁打", "塁打", "打点", "盗塁", "盗塁刺", "犠打", "犠飛", 
+    "四球", "死球", "三振", "併殺打", "打率", "長打率", "出塁率", "野手WAR", "wOBA", "OPS", "ISOp", "ランク"
+]
+
+ALLOWED_PITCHER_COLS = [
+    "player_id", "名前", "年度", "所属球団", "登板", "勝利", "敗戦", "セーブ", "ホールド", "HP",
+    "完投", "完封", "無四球", "打者", "投球回", "安打", "本塁打", "四球", "死球", "三振",
+    "暴投", "ボーク", "失点", "自責点", "防御率", "投手WAR", "ランク"
+]
 
 def safe_float(val):
     try:
@@ -50,18 +65,16 @@ def scrape_team(team_name, team_id, mode="battingstats"):
     
     tables = soup.find_all("table")
     extracted_data = []
+    allowed_list = ALLOWED_BATTER_COLS if mode == "battingstats" else ALLOWED_PITCHER_COLS
 
     for table in tables:
         thead = table.find("thead")
         if not thead: continue
-        
-        # 【修正】全角スペースや半角スペースを完全に除去してカラム名を統一
         cols = [th.text.strip().replace('\u3000', '').replace(' ', '') for th in thead.find_all("th")]
         
         try:
             name_idx = cols.index("選手名")
-        except ValueError:
-            continue
+        except ValueError: continue
         
         tbody = table.find("tbody")
         if not tbody: continue
@@ -70,16 +83,15 @@ def scrape_team(team_name, team_id, mode="battingstats"):
         for row in rows:
             tds = row.find_all("td")
             if len(tds) < name_idx + 1: continue
-            
             player_a = tds[name_idx].find("a")
             if not player_a: continue
             
             match = re.search(r'/player/(\d+)/', player_a['href'])
             if not match: continue
-            player_id = match.group(1)
             
-            s = {
-                "player_id": player_id,
+            # 生データの抽出
+            raw_s = {
+                "player_id": match.group(1),
                 "名前": player_a.text.strip(),
                 "年度": 2026,
                 "所属球団": team_name
@@ -90,19 +102,22 @@ def scrape_team(team_name, team_id, mode="battingstats"):
                 c_name = cols[i]
                 val = td.text.strip().replace('-', '0')
                 
-                # 特殊なマッピング対応
+                # 特殊マッピング
                 if c_name == "与四球": c_name = "四球"
                 if c_name == "与死球": c_name = "死球"
                 
                 if c_name in ["選手名", "背番号", "位置", "順位"]: continue
                 
-                if c_name == "投球回": s[c_name] = val
+                if c_name == "投球回": raw_s[c_name] = val
                 elif "." in val or c_name in ["打率", "防御率", "出塁率", "長打率", "OPS"]: 
-                    s[c_name] = safe_float(val)
+                    raw_s[c_name] = safe_float(val)
                 else: 
-                    s[c_name] = safe_int(val)
+                    raw_s[c_name] = safe_int(val)
             
-            extracted_data.append(s)
+            # 【重要】DBに存在するカラムだけを抽出（許可リストによるフィルタリング）
+            filtered_s = {k: v for k, v in raw_s.items() if k in allowed_list}
+            extracted_data.append(filtered_s)
+
     return extracted_data
 
 def calculate_metrics(batters, pitchers):
@@ -117,12 +132,9 @@ def calculate_metrics(batters, pitchers):
         hbp = b.get("死球", 0)
         tb = b.get("塁打", 0)
 
-        if b.get("出塁率", 0) == 0 and pa > 0:
-            b["出塁率"] = round((h + bb + hbp) / pa, 3)
-        if b.get("長打率", 0) == 0 and ab > 0:
-            b["長打率"] = round(tb / ab, 3)
-        if b.get("OPS", 0) == 0:
-            b["OPS"] = dotFormat(safe_float(b.get("出塁率")) + safe_float(b.get("長打率")))
+        if b.get("出塁率", 0) == 0 and pa > 0: b["出塁率"] = round((h + bb + hbp) / pa, 3)
+        if b.get("長打率", 0) == 0 and ab > 0: b["長打率"] = round(tb / ab, 3)
+        if b.get("OPS", 0) == 0: b["OPS"] = dotFormat(safe_float(b.get("出塁率")) + safe_float(b.get("長打率")))
         
         if pa > 0:
             h1 = h - b.get("二塁打", 0) - b.get("三塁打", 0) - b.get("本塁打", 0)
