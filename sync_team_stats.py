@@ -10,12 +10,28 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# Yahoo上の管理用定義
 TEAMS = {
     "巨人": 1, "ヤクルト": 2, "横浜": 3, "中日": 4, "阪神": 5, "広島": 6,
     "西武": 7, "日ハム": 8, "千葉": 9, "オリックス": 11, "ソフトバンク": 12, "楽天": 376
 }
 
-# --- Supabaseのテーブルのカラム名リスト ---
+# --- 【修正】NPB公式表記（2025以前のデータと完全一致） ---
+TEAM_NAME_MAP = {
+    "巨人": "読　売",
+    "ヤクルト": "東京ヤクルト",
+    "横浜": "横浜DeNA",
+    "中日": "中　日",
+    "阪神": "阪　神",
+    "広島": "広島東洋",
+    "西武": "埼玉西武",
+    "日ハム": "北海道日本ハム",
+    "千葉": "千葉ロッテ",
+    "オリックス": "オリックス",
+    "ソフトバンク": "福岡ソフトバンク",
+    "楽天": "東北楽天"
+}
+
 BATTER_DB_COLS = [
     "player_id", "名前", "年度", "所属球団", "試合", "打席", "打数", "得点", "安打", 
     "二塁打", "三塁打", "本塁打", "塁打", "打点", "盗塁", "盗塁刺", "犠打", "犠飛", 
@@ -37,13 +53,11 @@ def safe_float(val):
 def safe_int(val):
     return int(safe_float(val))
 
-# 【修正】ValueErrorを回避する安全なフォーマット関数
 def dotFormat(f_val, precision=3):
     try:
         formatted = format(safe_float(f_val), f".{precision}f")
         return formatted.replace('0.', '.') if formatted.startswith('0.') else formatted
-    except:
-        return ".000"
+    except: return ".000"
 
 def scrape_team(team_name, team_id, mode="battingstats"):
     url = f"https://baseball.yahoo.co.jp/npb/teams/{team_id}/{mode}"
@@ -53,11 +67,13 @@ def scrape_team(team_name, team_id, mode="battingstats"):
     
     player_map = {}
     tables = soup.find_all("table")
+    official_team_name = TEAM_NAME_MAP.get(team_name, team_name)
 
     for table in tables:
         thead = table.find("thead")
         if not thead: continue
-        cols = [th.text.strip().replace('\u3000', '').replace(' ', '') for th in thead.find_all("th")]
+        # ヘッダー項目を取得
+        cols = [th.text.strip() for th in thead.find_all("th")]
         
         try:
             name_idx = cols.index("選手名")
@@ -73,7 +89,7 @@ def scrape_team(team_name, team_id, mode="battingstats"):
             pid = re.search(r'/player/(\d+)/', player_a['href']).group(1)
             
             if pid not in player_map:
-                player_map[pid] = {"player_id": pid, "名前": player_a.text.strip(), "年度": 2026, "所属球団": team_name}
+                player_map[pid] = {"player_id": pid, "名前": player_a.text.strip(), "年度": "2026", "所属球団": official_team_name}
             
             s = player_map[pid]
             for i, td in enumerate(tds):
@@ -81,26 +97,21 @@ def scrape_team(team_name, team_id, mode="battingstats"):
                 c_name = cols[i]
                 val = td.text.strip().replace('-', '0')
                 
+                # --- 【修正】投手成績の項目マッピングを強化 ---
                 if c_name == "与四球": c_name = "四球"
                 if c_name == "与死球": c_name = "死球"
-                if c_name in ["選手名", "背番号", "位置", "順位"]: continue
+                if c_name == "奪三振": c_name = "三振" # 投手成績の「奪三振」を「三振」として取得
+                if c_name in ["ＨＰ", "HP"]: c_name = "HP"
+                if c_name in ["選手名", "背番号", "位置", "順位", "奪三振率"]: continue # 奪三振率は無視
                 
-                if c_name == "投球回":
-                    s[c_name] = val
-                elif "." in val or c_name in ["打率", "防御率"]:
-                    s[c_name] = safe_float(val)
-                else:
-                    # 数値項目は重複対策で「大きい方」を取る（試合数、安打数など）
-                    s[c_name] = max(s.get(c_name, 0), safe_int(val))
+                if c_name == "投球回": s[c_name] = val
+                elif "." in val or c_name in ["打率", "防御率"]: s[c_name] = safe_float(val)
+                else: s[c_name] = max(s.get(c_name, 0), safe_int(val))
 
-    results = list(player_map.values())
-    print(f"  -> {team_name}: {len(results)}名取得")
-    return results
+    return list(player_map.values())
 
 def calculate_metrics(batters, pitchers):
-    print("📈 指標計算中...")
     LG_WOBA = 0.315
-
     for b in batters:
         pa = b.get("打席", 0)
         ab = b.get("打数", 0)
@@ -108,12 +119,10 @@ def calculate_metrics(batters, pitchers):
         bb = b.get("四球", 0)
         hbp = b.get("死球", 0)
         tb = b.get("塁打", 0)
-
         b["出塁率"] = round((h + bb + hbp) / pa, 3) if pa > 0 else 0.0
         b["長打率"] = round(tb / ab, 3) if ab > 0 else 0.0
         b["OPS"] = dotFormat(b["出塁率"] + b["長打率"])
-        b["ISOp"] = dotFormat(b["長打率"] - b.get("打率", 0))
-        
+        b["ISOp"] = dotFormat(b["長打率"] - b.get("打率", 0.0))
         if pa > 0:
             h1 = h - b.get("二塁打", 0) - b.get("三塁打", 0) - b.get("本塁打", 0)
             woba = (0.7*bb + 0.72*hbp + 0.88*h1 + 1.24*b.get("二塁打", 0) + 1.56*b.get("三塁打", 0) + 2.05*b.get("本塁打", 0)) / pa
@@ -129,7 +138,6 @@ def calculate_metrics(batters, pitchers):
                 ip_f = float(parts[0]) + (float(parts[1])/3.0)
             else: ip_f = float(ip_str)
         except: ip_f = 0.0
-
         if ip_f > 0:
             fip = ((13*p.get("本塁打", 0) + 3*(p.get("四球", 0)+p.get("死球", 0)) - 2*p.get("三振", 0)) / ip_f) + 3.12
             p["投手WAR"] = round(((4.0 - fip) * ip_f / 9) / 10, 2)
@@ -140,15 +148,13 @@ def main():
     for t_name, t_id in TEAMS.items():
         all_batters.extend(scrape_team(t_name, t_id, "battingstats"))
         all_pitchers.extend(scrape_team(t_name, t_id, "pitchingstats"))
-        time.sleep(0.5)
 
     calculate_metrics(all_batters, all_pitchers)
 
-    # フィルタリング
-    final_batters = [{k: v for k, v in b.items() if k in BATTER_DB_COLS} for b in all_batters if b.get("試合", 0) > 0]
-    final_pitchers = [{k: v for k, v in p.items() if k in PITCHER_DB_COLS} for p in all_pitchers if p.get("登板", 0) > 0]
+    final_batters = [{k: v for k, v in b.items() if k in BATTER_DB_COLS} for b in all_batters if b.get("名前")]
+    final_pitchers = [{k: v for k, v in p.items() if k in PITCHER_DB_COLS} for p in all_pitchers if p.get("名前")]
 
-    print(f"🚀 送信準備完了 (野手:{len(final_batters)}名, 投手:{len(final_pitchers)}名)")
+    print(f"🚀 送信準備 (野手:{len(final_batters)}名, 投手:{len(final_pitchers)}名)")
     
     try:
         if final_batters:
@@ -157,7 +163,7 @@ def main():
         if final_pitchers:
             for i in range(0, len(final_pitchers), 50):
                 supabase.table("pitching_stats").upsert(final_pitchers[i:i+50], on_conflict="player_id,年度").execute()
-        print("✅ 全行程が正常に完了しました！")
+        print("✅ 全データの球団名と投手成績を修正して更新しました！")
     except Exception as e:
         print(f"❌ 書き込みエラー: {e}")
         exit(1)
