@@ -1,19 +1,17 @@
 'use client';
 
-// 【追加】キャッシュを強制無効化し、常に最新のSupabaseデータを見に行く設定
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
-
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 
+// --- ポジション補正 ---
 const POSITION_ADJUSTMENT: Record<string, number> = {
   '捕手': 12.5, '遊撃手': 7.5, '二塁手': 2.5, '三塁手': 2.5, '中堅手': 2.5,
   '右翼手': -2.5, '左翼手': -2.5, '外野手': -0.8, '内野手': 0, '一塁手': -12.5, '指名打者': -17.5,
 };
 
+// --- ランク判定ロジック ---
 const getRank = (value: number, type: 'FIP' | 'wRC+' | 'WAR' | 'wOBA' | 'ISOp') => {
   if (type === 'FIP') {
     if (value < 2.10) return 'SSS'; if (value < 2.60) return 'SS'; if (value < 3.10) return 'S'; if (value < 3.70) return 'A'; return 'B';
@@ -29,6 +27,7 @@ const getRank = (value: number, type: 'FIP' | 'wRC+' | 'WAR' | 'wOBA' | 'ISOp') 
   return 'B';
 };
 
+// --- バッジスタイル ---
 const rankBadge = (rank: string) => {
   const base = "px-3 py-1 rounded-lg font-black text-white shadow-[0_4px_0_0_rgba(0,0,0,0.2)] flex items-center justify-center italic border-t border-white/30";
   if (rank === 'SSS') return `${base} bg-gradient-to-b from-yellow-300 via-orange-500 to-red-600 animate-bounce`;
@@ -81,14 +80,14 @@ export default function PlayerDetail() {
             .or(`player_id.eq.${id},player_id.eq.${cleanId},名前.ilike.%${nameNoSpace}%`)
         ]);
 
-        // 型の不一致をここで解消
-        const processStats = (data: any[]) => (data || []).map(row => ({
+        // 型の不一致を解消し、ソート
+        const processData = (data: any[]) => (data || []).map(row => ({
           ...row,
-          年度: Number(row.年度) // 年度を強制的に数値化
+          年度: Number(row.年度)
         })).sort((a, b) => b.年度 - a.年度);
 
-        const myP = processStats(allP.data || []);
-        const myB = processStats(allB.data || []);
+        const myP = processData(allP.data || []);
+        const myB = processData(allB.data || []);
         setPitching(myP);
         setBatting(myB);
 
@@ -118,7 +117,7 @@ export default function PlayerDetail() {
           };
         });
         setLgStats(statsByYear);
-      } catch (e) { console.error(e); } finally { setLoading(false); }
+      } catch (e) { console.error("Fetch error:", e); } finally { setLoading(false); }
     }
     fetchData();
   }, [id]);
