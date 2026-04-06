@@ -10,7 +10,6 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Yahoo上の管理用定義
 TEAMS = {
     "巨人": 1, "ヤクルト": 2, "横浜": 3, "中日": 4, "阪神": 5, "広島": 6,
     "西武": 7, "日ハム": 8, "千葉": 9, "オリックス": 11, "ソフトバンク": 12, "楽天": 376
@@ -72,8 +71,8 @@ def scrape_team(team_name, team_id, mode="battingstats"):
     for table in tables:
         thead = table.find("thead")
         if not thead: continue
-        # ヘッダー項目を取得
-        cols = [th.text.strip() for th in thead.find_all("th")]
+        # 【重要】スペースを全て除去して「安打」「四球」などを確実に特定する
+        cols = [th.text.strip().replace('\u3000', '').replace(' ', '') for th in thead.find_all("th")]
         
         try:
             name_idx = cols.index("選手名")
@@ -97,16 +96,20 @@ def scrape_team(team_name, team_id, mode="battingstats"):
                 c_name = cols[i]
                 val = td.text.strip().replace('-', '0')
                 
-                # --- 【修正】投手成績の項目マッピングを強化 ---
-                if c_name == "与四球": c_name = "四球"
-                if c_name == "与死球": c_name = "死球"
-                if c_name == "奪三振": c_name = "三振" # 投手成績の「奪三振」を「三振」として取得
-                if c_name in ["ＨＰ", "HP"]: c_name = "HP"
-                if c_name in ["選手名", "背番号", "位置", "順位", "奪三振率"]: continue # 奪三振率は無視
+                # キーの正規化
+                if c_name in ["与四球", "四球"]: c_name = "四球"
+                if c_name in ["与死球", "死球"]: c_name = "死球"
+                if c_name == "奪三振": c_name = "三振"
+                if c_name in ["HP", "ＨＰ"]: c_name = "HP"
                 
-                if c_name == "投球回": s[c_name] = val
-                elif "." in val or c_name in ["打率", "防御率"]: s[c_name] = safe_float(val)
-                else: s[c_name] = max(s.get(c_name, 0), safe_int(val))
+                if c_name in ["選手名", "背番号", "位置", "順位", "奪三振率"]: continue
+                
+                if c_name == "投球回":
+                    s[c_name] = val
+                elif "." in val or c_name in ["打率", "防御率"]:
+                    s[c_name] = safe_float(val)
+                else:
+                    s[c_name] = max(s.get(c_name, 0), safe_int(val))
 
     return list(player_map.values())
 
@@ -119,10 +122,13 @@ def calculate_metrics(batters, pitchers):
         bb = b.get("四球", 0)
         hbp = b.get("死球", 0)
         tb = b.get("塁打", 0)
+
+        # 計算結果を浮動小数点でセット
         b["出塁率"] = round((h + bb + hbp) / pa, 3) if pa > 0 else 0.0
         b["長打率"] = round(tb / ab, 3) if ab > 0 else 0.0
         b["OPS"] = dotFormat(b["出塁率"] + b["長打率"])
         b["ISOp"] = dotFormat(b["長打率"] - b.get("打率", 0.0))
+        
         if pa > 0:
             h1 = h - b.get("二塁打", 0) - b.get("三塁打", 0) - b.get("本塁打", 0)
             woba = (0.7*bb + 0.72*hbp + 0.88*h1 + 1.24*b.get("二塁打", 0) + 1.56*b.get("三塁打", 0) + 2.05*b.get("本塁打", 0)) / pa
@@ -151,8 +157,8 @@ def main():
 
     calculate_metrics(all_batters, all_pitchers)
 
-    final_batters = [{k: v for k, v in b.items() if k in BATTER_DB_COLS} for b in all_batters if b.get("名前")]
-    final_pitchers = [{k: v for k, v in p.items() if k in PITCHER_DB_COLS} for p in all_pitchers if p.get("名前")]
+    final_batters = [{k: v for k, v in b.items() if k in BATTER_DB_COLS} for b in all_batters]
+    final_pitchers = [{k: v for k, v in p.items() if k in PITCHER_DB_COLS} for p in all_pitchers]
 
     print(f"🚀 送信準備 (野手:{len(final_batters)}名, 投手:{len(final_pitchers)}名)")
     
@@ -163,9 +169,9 @@ def main():
         if final_pitchers:
             for i in range(0, len(final_pitchers), 50):
                 supabase.table("pitching_stats").upsert(final_pitchers[i:i+50], on_conflict="player_id,年度").execute()
-        print("✅ 全データの球団名と投手成績を修正して更新しました！")
+        print("✅ 全修正が完了しました。")
     except Exception as e:
-        print(f"❌ 書き込みエラー: {e}")
+        print(f"❌ エラー: {e}")
         exit(1)
 
 if __name__ == "__main__":
