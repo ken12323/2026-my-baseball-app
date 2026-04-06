@@ -1,17 +1,19 @@
 'use client';
 
+// 【追加】キャッシュを強制無効化し、常に最新のSupabaseデータを見に行く設定
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 
-// --- ポジション補正 ---
 const POSITION_ADJUSTMENT: Record<string, number> = {
   '捕手': 12.5, '遊撃手': 7.5, '二塁手': 2.5, '三塁手': 2.5, '中堅手': 2.5,
   '右翼手': -2.5, '左翼手': -2.5, '外野手': -0.8, '内野手': 0, '一塁手': -12.5, '指名打者': -17.5,
 };
 
-// --- ランク判定ロジック ---
 const getRank = (value: number, type: 'FIP' | 'wRC+' | 'WAR' | 'wOBA' | 'ISOp') => {
   if (type === 'FIP') {
     if (value < 2.10) return 'SSS'; if (value < 2.60) return 'SS'; if (value < 3.10) return 'S'; if (value < 3.70) return 'A'; return 'B';
@@ -27,7 +29,6 @@ const getRank = (value: number, type: 'FIP' | 'wRC+' | 'WAR' | 'wOBA' | 'ISOp') 
   return 'B';
 };
 
-// --- バッジスタイル ---
 const rankBadge = (rank: string) => {
   const base = "px-3 py-1 rounded-lg font-black text-white shadow-[0_4px_0_0_rgba(0,0,0,0.2)] flex items-center justify-center italic border-t border-white/30";
   if (rank === 'SSS') return `${base} bg-gradient-to-b from-yellow-300 via-orange-500 to-red-600 animate-bounce`;
@@ -64,18 +65,15 @@ export default function PlayerDetail() {
     async function fetchData() {
       try {
         setLoading(true);
-        // 1. 選手の基本情報を取得
         const { data: p } = await supabase.from('players').select('*').eq('player_id', id).single();
         if (!p) { setLoading(false); return; }
         setPlayer(p);
 
-        // --- データ取得ロジックの強化 ---
-        // 名前からスペースを抜いたもの
+        // 名前のクリーニング
         const nameNoSpace = p.player_name.replace(/\s+/g, '');
-        // IDから先頭の0を抜いたもの (例: 01600085 -> 1600085)
         const cleanId = String(id).replace(/^0+/, '');
 
-        // player_id (0あり/なし) または 名前 (完全一致/部分一致) で成績を検索
+        // データの取得
         const [allP, allB] = await Promise.all([
           supabase.from('pitching_stats').select('*')
             .or(`player_id.eq.${id},player_id.eq.${cleanId},名前.ilike.%${nameNoSpace}%`),
@@ -83,35 +81,36 @@ export default function PlayerDetail() {
             .or(`player_id.eq.${id},player_id.eq.${cleanId},名前.ilike.%${nameNoSpace}%`)
         ]);
 
-        // 年度を数値に変換してソート
-        const myP = (allP.data || []).sort((a, b) => Number(b.年度) - Number(a.年度));
-        const myB = (allB.data || []).sort((a, b) => Number(b.年度) - Number(a.年度));
+        // 型の不一致をここで解消
+        const processStats = (data: any[]) => (data || []).map(row => ({
+          ...row,
+          年度: Number(row.年度) // 年度を強制的に数値化
+        })).sort((a, b) => b.年度 - a.年度);
+
+        const myP = processStats(allP.data || []);
+        const myB = processStats(allB.data || []);
         setPitching(myP);
         setBatting(myB);
 
-        // 年度のリストを作成 (文字列として統一)
-        const years = Array.from(new Set([...myP.map(s => String(s.年度)), ...myB.map(s => String(s.年度))]));
+        const years = Array.from(new Set([...myP.map(s => s.年度), ...myB.map(s => s.年度)]));
         if (years.length === 0) { setLoading(false); return; }
 
-        // リーグ平均データを取得
+        const yearStrings = years.map(String);
         const [{ data: lgB }, { data: lgP }] = await Promise.all([
-          supabase.from('batting_stats').select('*').in('年度', years),
-          supabase.from('pitching_stats').select('*').in('年度', years)
+          supabase.from('batting_stats').select('*').in('年度', yearStrings),
+          supabase.from('pitching_stats').select('*').in('年度', yearStrings)
         ]);
 
         const statsByYear: Record<string, any> = {};
         years.forEach(year => {
-          // 型を文字列に揃えてフィルタリング
-          const yearB = lgB?.filter(r => String(r.年度) === String(year)) || [];
-          const yearP = lgP?.filter(r => String(r.年度) === String(year)) || [];
-          
+          const yearB = lgB?.filter(r => Number(r.年度) === year) || [];
+          const yearP = lgP?.filter(r => Number(r.年度) === year) || [];
           const sumPA = yearB.reduce((acc, r) => acc + toF(r.打席), 0) || 1;
           const sumIP = yearP.reduce((acc, r) => acc + formatIP(r.投球回), 0) || 1;
           const sumER = yearP.reduce((acc, r) => acc + toF(r.自責点), 0);
           const lgERA = (sumER * 9) / sumIP;
           const rawFIP = (13 * yearP.reduce((acc, r) => acc + toF(r.本塁打), 0) + 3 * (yearP.reduce((acc, r) => acc + toF(r.四球), 0) + yearP.reduce((acc, r) => acc + toF(r.死球), 0)) - 2 * yearP.reduce((acc, r) => acc + toF(r.三振), 0)) / sumIP;
-          
-          statsByYear[String(year)] = { 
+          statsByYear[year] = { 
             lgwOBA: (0.7 * yearB.reduce((acc, r) => acc + toF(r.四球), 0) + 0.72 * yearB.reduce((acc, r) => acc + toF(r.死球), 0) + 0.9 * (yearB.reduce((acc, r) => acc + toF(r.安打), 0) - yearB.reduce((acc, r) => acc + (toF(r.二塁打)+toF(r.三塁打)+toF(r.本塁打)), 0)) + 1.25 * yearB.reduce((acc, r) => acc + toF(r.二塁打), 0) + 1.6 * yearB.reduce((acc, r) => acc + toF(r.三塁打), 0) + 2.0 * yearB.reduce((acc, r) => acc + toF(r.本塁打), 0)) / sumPA, 
             lgFIP_C: lgERA - rawFIP, 
             lgR_PA: yearB.reduce((acc, r) => acc + toF(r.得点), 0) / sumPA, 
@@ -119,7 +118,7 @@ export default function PlayerDetail() {
           };
         });
         setLgStats(statsByYear);
-      } catch (e) { console.error("Data fetch error:", e); } finally { setLoading(false); }
+      } catch (e) { console.error(e); } finally { setLoading(false); }
     }
     fetchData();
   }, [id]);
@@ -128,10 +127,8 @@ export default function PlayerDetail() {
   if (!player) return <div className="p-10">選手が見つかりませんでした</div>;
 
   const calcSaber = (row: any, type: 'P' | 'B') => {
-    // 年度のキーを文字列として参照
-    const yearData = lgStats[String(row.年度)];
+    const yearData = lgStats[row.年度];
     if (!yearData) return { fip: '-', war: '-', woba: 0, wrcPlus: 0, iso: 0 };
-    
     if (type === 'P') {
       const ip = formatIP(row.投球回);
       const fipVal = ip === 0 ? 9 : (13 * toF(row.本塁打) + 3 * (toF(row.四球) + toF(row.死球)) - 2 * toF(row.三振)) / ip + yearData.lgFIP_C;
@@ -194,11 +191,9 @@ export default function PlayerDetail() {
       <div className="max-w-2xl mx-auto">
         <Link href="/" className="text-blue-600 font-black mb-4 inline-block px-2">← メニューへ戻る</Link>
         
-        {/* --- ヘッダーカード --- */}
         <header className="bg-white rounded-[2.5rem] overflow-hidden shadow-2xl border-4 border-blue-500 mb-8 p-6 md:p-8">
           <div className="flex justify-between items-start gap-4 mb-8">
             <div className="flex flex-col flex-1">
-              {/* 選手アバター */}
               <div className="w-24 h-24 md:w-32 md:h-32 rounded-3xl border-4 border-blue-200 flex items-center justify-center overflow-hidden shadow-inner mb-4 bg-white">
                 <img
                   src={selectedAvatarPath}
@@ -215,7 +210,6 @@ export default function PlayerDetail() {
               </div>
             </div>
 
-            {/* 総合評価ボックス */}
             <div className="flex flex-col items-center w-28 md:w-36 flex-shrink-0">
               <span className="bg-blue-600 text-white text-[10px] md:text-xs font-black px-4 py-1.5 rounded-t-xl w-full text-center">総合評価</span>
               <div className="bg-blue-50 w-full flex flex-col items-center justify-center py-4 md:py-6 rounded-b-xl border-2 border-blue-600 shadow-inner">
@@ -228,7 +222,6 @@ export default function PlayerDetail() {
             </div>
           </div>
 
-          {/* 重要指標 2x2 パネル */}
           <div className="grid grid-cols-2 gap-3 md:gap-4 mt-4">
             {isPitcher ? (
               <>
@@ -260,7 +253,6 @@ export default function PlayerDetail() {
           </div>
         </header>
 
-        {/* --- プロフィール・経歴セクション --- */}
         <div className="bg-white rounded-[2rem] p-6 md:p-10 shadow-xl border-4 border-gray-200 mb-8">
           <div className="grid grid-cols-2 gap-x-6 md:gap-x-12 gap-y-8 mb-8">
             <div className="space-y-4">
@@ -292,7 +284,6 @@ export default function PlayerDetail() {
           </div>
         </div>
 
-        {/* --- 成績テーブルセクション --- */}
         <section className="space-y-12 mb-20">
           {pitching.length > 0 && (
             <div>
@@ -330,7 +321,7 @@ export default function PlayerDetail() {
                     {pitching.map((row, i) => {
                       const s = calcSaber(row, 'P') as any;
                       return (
-                        <tr key={i} className="hover:bg-blue-50 transition-colors">
+                        <tr key={row.年度 + i} className="hover:bg-blue-50 transition-colors">
                           <td className={stickyYearCell + " p-4 font-black"}>{row.年度}</td>
                           <td className={stickyTeamCell + " p-4 font-black text-gray-400"}>{row.所属球団}</td>
                           {pTab === 'basic' ? (
@@ -401,7 +392,7 @@ export default function PlayerDetail() {
                     {batting.map((row, i) => {
                       const s = calcSaber(row, 'B') as any;
                       return (
-                        <tr key={i} className="hover:bg-green-50 transition-colors">
+                        <tr key={row.年度 + i} className="hover:bg-green-50 transition-colors">
                           <td className={stickyYearCell + " p-4 font-black"}>{row.年度}</td>
                           <td className={stickyTeamCell + " p-4 font-black text-gray-400"}>{row.所属球団}</td>
                           {bTab === 'basic' ? (
