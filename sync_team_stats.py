@@ -31,14 +31,16 @@ TEAM_NAME_MAP = {
     "楽天": "東北楽天"
 }
 
+# 【修正】背番号をカラムリストに追加
 BATTER_DB_COLS = [
-    "player_id", "名前", "年度", "所属球団", "試合", "打席", "打数", "得点", "安打", 
+    "player_id", "名前", "年度", "所属球団", "背番号", "試合", "打席", "打数", "得点", "安打", 
     "二塁打", "三塁打", "本塁打", "塁打", "打点", "盗塁", "盗塁刺", "犠打", "犠飛", 
     "四球", "死球", "三振", "併殺打", "打率", "長打率", "出塁率", "野手WAR", "wOBA", "OPS", "ISOp", "ランク"
 ]
 
+# 【修正】背番号をカラムリストに追加
 PITCHER_DB_COLS = [
-    "player_id", "名前", "年度", "所属球団", "登板", "勝利", "敗戦", "セーブ", "ホールド", "HP",
+    "player_id", "名前", "年度", "所属球団", "背番号", "登板", "勝利", "敗戦", "セーブ", "ホールド", "HP",
     "完投", "完封", "無四球", "打者", "投球回", "安打", "本塁打", "四球", "死球", "三振",
     "暴投", "ボーク", "失点", "自責点", "防御率", "投手WAR", "ランク"
 ]
@@ -102,13 +104,15 @@ def scrape_team(team_name, team_id, mode="battingstats"):
                 if c_name == "奪三振": c_name = "三振"
                 if c_name in ["HP", "ＨＰ"]: c_name = "HP"
                 
-                if c_name in ["選手名", "背番号", "位置", "順位", "奪三振率"]: continue
+                # 【修正】背番号を無視リストから削除
+                if c_name in ["選手名", "位置", "順位", "奪三振率"]: continue
                 
                 if c_name == "投球回":
                     s[c_name] = val
                 elif "." in val or c_name in ["打率", "防御率"]:
                     s[c_name] = safe_float(val)
                 else:
+                    # 背番号などは数値として保存される
                     s[c_name] = max(s.get(c_name, 0), safe_int(val))
 
     return list(player_map.values())
@@ -169,7 +173,7 @@ def main():
         if final_pitchers:
             for i in range(0, len(final_pitchers), 50):
                 supabase.table("pitching_stats").upsert(final_pitchers[i:i+50], on_conflict="player_id,年度").execute()
-        print("✅ 全修正が完了しました。")
+        print("✅ 全修正（背番号含む）が完了しました。")
     except Exception as e:
         print(f"❌ エラー: {e}")
         exit(1)
