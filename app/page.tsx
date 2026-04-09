@@ -84,7 +84,7 @@ function RankingList() {
             else if (category === 'university' && player.university) keys.push(player.university);
             else if (category === 'prev_team') {
               [player.prev_team_1, player.prev_team_2, player.prev_team_3].forEach(t => t && keys.push(t));
-            } else if (category === 'draft_year' && player.draft_year) keys.push(player.draft_year); // ID用に年はそのまま
+            } else if (category === 'draft_year' && player.draft_year) keys.push(player.draft_year);
             else if (category === 'hometown') keys.push(player.hometown || '不明');
 
             keys.forEach(key => {
@@ -158,19 +158,30 @@ function RankingList() {
       ) : (
         <div className="space-y-3">
           {ranking.map((item, index) => {
-            // URL用に変換（ドラフト年などの数字から「年指名」を除去して純粋なキーを取得）
             const rawName = category === 'draft_year' ? item.name.replace('年指名', '') : item.name;
             const detailUrl = `/roots/${CATEGORY_URL_MAP[category]}/${encodeURIComponent(rawName)}`;
 
             return (
               <div key={item.name} className="group bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden hover:border-blue-300 transition-all hover:-translate-y-1">
                 <div className="flex items-center justify-between p-5">
-                  <Link href={detailUrl} className="flex items-center gap-5 flex-1 group/title">
+                  <div className="flex items-center gap-5 flex-1">
+                    {/* 順位 */}
                     <div className={`text-2xl font-black italic w-8 ${index < 3 ? 'text-blue-600' : 'text-slate-200'}`}>{index + 1}</div>
-                    <h2 className="text-lg font-bold text-slate-800 group-hover/title:text-blue-600 transition-colors underline decoration-blue-100 decoration-4 underline-offset-4">{item.name}</h2>
-                  </Link>
+                    
+                    {/* 【修正箇所】名前と詳細リンクを横に並べる */}
+                    <div className="flex items-center gap-3">
+                      <Link href={detailUrl} className="group/name">
+                        <h2 className="text-xl font-bold text-slate-800 group-hover/name:text-blue-600 transition-colors underline decoration-blue-100 decoration-4 underline-offset-4">{item.name}</h2>
+                      </Link>
+                      <Link href={detailUrl} className="text-[10px] font-black text-blue-400 hover:text-blue-600 flex items-center gap-0.5 group/more whitespace-nowrap bg-blue-50 px-2 py-1 rounded-md shadow-sm transition-colors mt-0.5">
+                        詳細ランキングを見る
+                        <span className="transition-transform group-hover/more:translate-x-1">→</span>
+                      </Link>
+                    </div>
+                  </div>
                   
-                  <Link href={detailUrl} className="flex gap-6 items-center group/stats">
+                  {/* スコア表示 */}
+                  <div className="flex gap-6 items-center">
                     <div className="text-right leading-none border-r pr-6 border-slate-100">
                       <p className="text-[10px] text-slate-400 font-black mb-1 uppercase">Hits</p>
                       <p className="text-2xl font-black text-blue-900">{item.total_hits}</p>
@@ -179,9 +190,10 @@ function RankingList() {
                       <p className="text-[10px] text-slate-400 font-black mb-1 uppercase">HR</p>
                       <p className="text-2xl font-black text-red-600">{item.total_hr}</p>
                     </div>
-                  </Link>
+                  </div>
                 </div>
 
+                {/* 貢献選手リスト */}
                 <div className="px-5 md:px-16 pb-6 pt-2 bg-slate-50 border-t border-slate-100">
                   <p className="text-[9px] font-bold text-slate-400 mb-3 tracking-widest uppercase">Contributing Players</p>
                   <div className="flex flex-wrap gap-2">
@@ -192,13 +204,6 @@ function RankingList() {
                         <span className="text-blue-600 font-black">{p.hits}H</span>
                       </Link>
                     ))}
-                  </div>
-                  {/* 詳細ページへのガイドボタン */}
-                  <div className="mt-4 text-right">
-                    <Link href={detailUrl} className="text-[10px] font-black text-blue-500 hover:text-blue-700 uppercase tracking-widest flex items-center justify-end gap-1 group/more">
-                      View Full Ranking
-                      <span className="transition-transform group-hover/more:translate-x-1">→</span>
-                    </Link>
                   </div>
                 </div>
               </div>
