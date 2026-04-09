@@ -159,25 +159,13 @@ function RankingList() {
             const detailUrl = `/roots/${CATEGORY_URL_MAP[category]}/${encodeURIComponent(rawName)}`;
 
             return (
-              /* 【戻した箇所】detailsを使ってアコーディオン形式に */
               <details key={item.name} className="group bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden hover:border-blue-300 transition-all">
                 <summary className="flex items-center justify-between p-5 cursor-pointer list-none">
                   <div className="flex items-center gap-5 flex-1">
                     <div className={`text-2xl font-black italic w-8 ${index < 3 ? 'text-blue-600' : 'text-slate-200'}`}>{index + 1}</div>
                     
-                    <div className="flex items-center gap-3">
-                      {/* 学校名/地域名そのものは詳細へのリンク（クリックイベントの伝播を止めてアコーディオンが開かないようにする） */}
-                      <div className="group/name" onClick={(e) => e.stopPropagation()}>
-                        <Link href={detailUrl}>
-                          <h2 className="text-xl font-bold text-slate-800 hover:text-blue-600 transition-colors underline decoration-blue-100 decoration-4 underline-offset-4">{item.name}</h2>
-                        </Link>
-                      </div>
-                      {/* 詳細リンクボタン（伝播を止める） */}
-                      <div onClick={(e) => e.stopPropagation()}>
-                        <Link href={detailUrl} className="text-[10px] font-black text-blue-400 hover:text-blue-600 flex items-center gap-0.5 whitespace-nowrap bg-blue-50 px-2 py-1 rounded-md shadow-sm transition-colors">
-                          詳細ランキングを見る →
-                        </Link>
-                      </div>
+                    <div className="group/name">
+                      <h2 className="text-xl font-bold text-slate-800 underline decoration-blue-100 decoration-4 underline-offset-4">{item.name}</h2>
                     </div>
                   </div>
                   
@@ -193,9 +181,16 @@ function RankingList() {
                   </div>
                 </summary>
 
-                {/* この中身は summary（ヘッダー）をクリックした時だけ表示される */}
-                <div className="px-5 md:px-16 pb-6 pt-2 bg-slate-50 border-t border-slate-100">
-                  <p className="text-[9px] font-bold text-slate-400 mb-3 tracking-widest uppercase">Contributing Players</p>
+                <div className="px-5 md:px-16 pb-6 pt-4 bg-slate-50 border-t border-slate-100">
+                  {/* 【修正】タイトルとリンクを横並びに配置 */}
+                  <div className="flex items-center justify-between mb-4">
+                    <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase">主な活躍選手</p>
+                    <Link href={detailUrl} className="text-[10px] font-black text-blue-500 hover:text-blue-700 flex items-center gap-1 bg-blue-100/50 px-3 py-1.5 rounded-full transition-all hover:scale-105 active:scale-95 shadow-sm">
+                      詳細ランキングを見る
+                      <span className="text-xs">→</span>
+                    </Link>
+                  </div>
+
                   <div className="flex flex-wrap gap-2">
                     {item.players.sort((a,b)=>b.hits - a.hits).map(p => (
                       <Link key={p.name} href={`/player/${p.id}`} className="bg-white border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm text-xs flex items-center gap-2 hover:border-blue-500 hover:bg-blue-50 transition-all group/item">
