@@ -55,7 +55,6 @@ export default function PlayerDetail() {
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
   const [bCareerHighs, setBCareerHighs] = useState<Record<string, number>>({});
 
-  // 【修正】見つからないと言われていた関数の定義を復活
   const tabBtn = (active: boolean) => `flex-1 py-3 text-sm font-black transition-all rounded-xl ${active ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-100 text-gray-400'}`;
 
   const dotFormat = (val: any) => {
@@ -161,6 +160,7 @@ export default function PlayerDetail() {
 
   const teamInitial = player.team_name.includes('阪神') ? 'T' : player.team_name.includes('中日') ? 'D' : 'P';
   const latestB = batting[0];
+  const latestP = pitching[0];
   const bSaber = latestB ? calcSaber(latestB, 'B') : ({} as any);
   const totalWar = player.position_detail === '投手' ? (pitching[0] ? toF(calcSaber(pitching[0], 'P').warVal) : 0) : bSaber.warVal;
   const totalRank = player.position_detail === '投手' ? getRank(totalWar, 'WAR') : getRank(bSaber.wrcPlusVal, 'wRC+');
@@ -193,7 +193,7 @@ export default function PlayerDetail() {
           <div className="flex justify-between items-start gap-4 mb-8">
             <div className="flex flex-col flex-1">
               <div className="w-24 h-24 md:w-32 md:h-32 rounded-3xl border-4 border-blue-100 flex items-center justify-center overflow-hidden shadow-inner mb-4 bg-white relative">
-                <img src={`/images/avatars/${teamInitial}_${player.position_detail === '投手' ? 'pitcher_right' : 'batter_right'}.png`} alt="avatar" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.src = "/images/avatars/default.png"; }} />
+                <img src={`/images/avatars/${teamInitial}_${player.position_detail === '投手' ? 'pitcher_right' : 'batter_right'}.png`} alt="アバター" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.src = "/images/avatars/default.png"; }} />
                 <div className="absolute bottom-0 right-0 bg-blue-600 text-white font-black italic px-3 py-1 text-2xl rounded-tl-2xl border-t-2 border-l-2 border-white shadow-lg">
                   #{latestB?.背番号 || '--'}
                 </div>
@@ -227,20 +227,68 @@ export default function PlayerDetail() {
           </div>
         </header>
 
-        <div className="bg-white rounded-[2rem] p-6 md:p-10 shadow-xl border-4 border-slate-100 mb-8">
+        {/* --- プロフィール ＆ トレンドグラフ --- */}
+        <div className="bg-white rounded-[2rem] p-6 md:p-10 shadow-xl border-4 border-slate-100 mb-8 text-black">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="space-y-6">
-              <h3 className="text-blue-600 font-black text-xs uppercase border-b-2 border-blue-100 pb-2">プロフィール</h3>
-              <div className="grid grid-cols-1 gap-4 text-sm font-black text-slate-900">
+              <h3 className="text-blue-600 font-black text-xs uppercase border-b-2 border-blue-100 pb-2 flex items-center gap-2">プロフィール</h3>
+              
+              {/* 【修正箇所】プロフィール項目をすべてランキングへのリンクに変更 */}
+              <div className="grid grid-cols-1 gap-4 text-sm font-black">
                 <p className="flex flex-col"><span className="text-gray-400 text-[10px] font-bold">生年月日</span>{player.birthday}</p>
                 <p className="flex flex-col"><span className="text-gray-400 text-[10px] font-bold">身長 / 体重</span>{player.height}cm / {player.weight}kg</p>
-                <p className="flex flex-col"><span className="text-gray-400 text-[10px] font-bold">出身校</span>{player.high_school} {player.university && `/ ${player.university}`}</p>
-                <p className="flex flex-col"><span className="text-gray-400 text-[10px] font-bold underline decoration-blue-200 decoration-2">ドラフト指名</span>{player.draft_year}年：{player.draft_rank}位指名</p>
+                
+                <p className="flex flex-col">
+                  <span className="text-gray-400 text-[10px] font-bold">出身校</span>
+                  <span className="flex gap-2">
+                    <Link href={`/roots/high_school/${player.high_school}`} className="text-blue-600 hover:underline">
+                      {player.high_school}
+                    </Link>
+                    {player.university && (
+                      <>
+                        <span className="text-gray-300">/</span>
+                        <Link href={`/roots/university/${player.university}`} className="text-blue-600 hover:underline">
+                          {player.university}
+                        </Link>
+                      </>
+                    )}
+                  </span>
+                </p>
+
+                <p className="flex flex-col">
+                  <span className="text-gray-400 text-[10px] font-bold underline decoration-blue-200 decoration-2">ドラフト指名</span>
+                  <Link href={`/roots/draft/${player.draft_year}`} className="text-blue-600 hover:underline">
+                    {player.draft_year}年：{player.draft_rank}位指名
+                  </Link>
+                </p>
+
+                <p className="flex flex-col">
+                  <span className="text-gray-400 text-[10px] font-bold">出身地</span>
+                  <Link href={`/roots/hometown/${player.hometown}`} className="text-blue-600 hover:underline">
+                    {player.hometown}
+                  </Link>
+                </p>
+
+                {/* 前所属がある場合もリンク化 */}
+                {(player.prev_team_1 || player.prev_team_2) && (
+                  <p className="flex flex-col">
+                    <span className="text-gray-400 text-[10px] font-bold">前所属</span>
+                    <span className="flex flex-wrap gap-x-2 leading-tight">
+                      {[player.prev_team_1, player.prev_team_2].filter(t => t).map((team, idx) => (
+                        <span key={team}>
+                          {idx > 0 && <span className="text-gray-300 mr-2">→</span>}
+                          <Link href={`/roots/previous_team/${team}`} className="text-blue-600 hover:underline">{team}</Link>
+                        </span>
+                      ))}
+                    </span>
+                  </p>
+                )}
               </div>
             </div>
+
             <div className="space-y-4">
               <h3 className="text-blue-600 font-black text-xs uppercase border-b-2 border-blue-100 pb-2">年度別成績トレンド</h3>
-              <div className="h-48 w-full bg-slate-50 rounded-2xl p-3 border border-slate-200">
+              <div className="h-48 w-full bg-slate-50 rounded-2xl p-3 border border-slate-200 shadow-inner">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
@@ -290,7 +338,7 @@ export default function PlayerDetail() {
                     {batting.map((row, i) => {
                       const s = calcSaber(row, 'B') as any;
                       const isH = (key: string, val: any) => i !== 0 && toF(val) >= (bCareerHighs[key] || 0);
-                      const cellBg = i % 2 !== 0 ? "bg-slate-200" : "bg-white"; // 濃い目のストライプ
+                      const cellBg = i % 2 !== 0 ? "bg-slate-200" : "bg-white";
                       return (
                         <tr key={i}>
                           <td className={`sticky left-0 z-20 ${cellBg} p-4 font-black border-r border-slate-100`}>{row.年度}</td>
@@ -325,6 +373,7 @@ export default function PlayerDetail() {
           )}
         </section>
       </div>
+      <footer className="mt-20 text-center text-gray-400 text-[10px] font-black uppercase tracking-[0.5em] pb-12 italic">© 2026 POWERFUL NPB ANALYTICS</footer>
     </main>
   );
 }
