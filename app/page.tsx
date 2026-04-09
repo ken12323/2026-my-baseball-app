@@ -25,7 +25,6 @@ interface RankingRow {
   players: PlayerSummary[];
 }
 
-// --- URL用のタイプ変換マップ ---
 const CATEGORY_URL_MAP: Record<string, string> = {
   high_school: 'high_school',
   university: 'university',
@@ -62,7 +61,6 @@ function RankingList() {
         if (period === 'yesterday') targetQueryDate = yesterdayStr;
         setDisplayDate(period === 'season' ? '2026年 通算' : targetQueryDate);
 
-        // クエリ構築
         let query = supabase.from('daily_performance').select('*');
         if (period === 'today') query = query.eq('date', todayStr);
         else if (period === 'yesterday') query = query.eq('date', yesterdayStr);
@@ -90,7 +88,6 @@ function RankingList() {
             keys.forEach(key => {
               if (!key || key === '-' || key === '未設定') return;
               const displayKey = category === 'draft_year' ? `${key}年指名` : key;
-              
               if (!stats[key]) {
                 stats[key] = { name: displayKey, total_hits: 0, total_hr: 0, total_rbi: 0, players: [] };
               }
@@ -162,25 +159,28 @@ function RankingList() {
             const detailUrl = `/roots/${CATEGORY_URL_MAP[category]}/${encodeURIComponent(rawName)}`;
 
             return (
-              <div key={item.name} className="group bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden hover:border-blue-300 transition-all hover:-translate-y-1">
-                <div className="flex items-center justify-between p-5">
+              /* 【戻した箇所】detailsを使ってアコーディオン形式に */
+              <details key={item.name} className="group bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden hover:border-blue-300 transition-all">
+                <summary className="flex items-center justify-between p-5 cursor-pointer list-none">
                   <div className="flex items-center gap-5 flex-1">
-                    {/* 順位 */}
                     <div className={`text-2xl font-black italic w-8 ${index < 3 ? 'text-blue-600' : 'text-slate-200'}`}>{index + 1}</div>
                     
-                    {/* 【修正箇所】名前と詳細リンクを横に並べる */}
                     <div className="flex items-center gap-3">
-                      <Link href={detailUrl} className="group/name">
-                        <h2 className="text-xl font-bold text-slate-800 group-hover/name:text-blue-600 transition-colors underline decoration-blue-100 decoration-4 underline-offset-4">{item.name}</h2>
-                      </Link>
-                      <Link href={detailUrl} className="text-[10px] font-black text-blue-400 hover:text-blue-600 flex items-center gap-0.5 group/more whitespace-nowrap bg-blue-50 px-2 py-1 rounded-md shadow-sm transition-colors mt-0.5">
-                        詳細ランキングを見る
-                        <span className="transition-transform group-hover/more:translate-x-1">→</span>
-                      </Link>
+                      {/* 学校名/地域名そのものは詳細へのリンク（クリックイベントの伝播を止めてアコーディオンが開かないようにする） */}
+                      <div className="group/name" onClick={(e) => e.stopPropagation()}>
+                        <Link href={detailUrl}>
+                          <h2 className="text-xl font-bold text-slate-800 hover:text-blue-600 transition-colors underline decoration-blue-100 decoration-4 underline-offset-4">{item.name}</h2>
+                        </Link>
+                      </div>
+                      {/* 詳細リンクボタン（伝播を止める） */}
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <Link href={detailUrl} className="text-[10px] font-black text-blue-400 hover:text-blue-600 flex items-center gap-0.5 whitespace-nowrap bg-blue-50 px-2 py-1 rounded-md shadow-sm transition-colors">
+                          詳細ランキングを見る →
+                        </Link>
+                      </div>
                     </div>
                   </div>
                   
-                  {/* スコア表示 */}
                   <div className="flex gap-6 items-center">
                     <div className="text-right leading-none border-r pr-6 border-slate-100">
                       <p className="text-[10px] text-slate-400 font-black mb-1 uppercase">Hits</p>
@@ -191,9 +191,9 @@ function RankingList() {
                       <p className="text-2xl font-black text-red-600">{item.total_hr}</p>
                     </div>
                   </div>
-                </div>
+                </summary>
 
-                {/* 貢献選手リスト */}
+                {/* この中身は summary（ヘッダー）をクリックした時だけ表示される */}
                 <div className="px-5 md:px-16 pb-6 pt-2 bg-slate-50 border-t border-slate-100">
                   <p className="text-[9px] font-bold text-slate-400 mb-3 tracking-widest uppercase">Contributing Players</p>
                   <div className="flex flex-wrap gap-2">
@@ -206,7 +206,7 @@ function RankingList() {
                     ))}
                   </div>
                 </div>
-              </div>
+              </details>
             );
           })}
         </div>
