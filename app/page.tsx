@@ -25,7 +25,16 @@ interface RankingRow {
   players: PlayerSummary[];
 }
 
-// --- 2. メインのロジック部分 (Suspenseの中で動かす) ---
+// --- URL用のタイプ変換マップ ---
+const CATEGORY_URL_MAP: Record<string, string> = {
+  high_school: 'high_school',
+  university: 'university',
+  prev_team: 'previous_team',
+  draft_year: 'draft',
+  hometown: 'hometown'
+};
+
+// --- 2. メインのロジック部分 ---
 function RankingList() {
   const searchParams = useSearchParams();
   const period = (searchParams.get('period') as Period) || 'today';
@@ -53,6 +62,7 @@ function RankingList() {
         if (period === 'yesterday') targetQueryDate = yesterdayStr;
         setDisplayDate(period === 'season' ? '2026年 通算' : targetQueryDate);
 
+        // クエリ構築
         let query = supabase.from('daily_performance').select('*');
         if (period === 'today') query = query.eq('date', todayStr);
         else if (period === 'yesterday') query = query.eq('date', yesterdayStr);
@@ -74,13 +84,15 @@ function RankingList() {
             else if (category === 'university' && player.university) keys.push(player.university);
             else if (category === 'prev_team') {
               [player.prev_team_1, player.prev_team_2, player.prev_team_3].forEach(t => t && keys.push(t));
-            } else if (category === 'draft_year' && player.draft_year) keys.push(`${player.draft_year}年指名`);
+            } else if (category === 'draft_year' && player.draft_year) keys.push(player.draft_year); // ID用に年はそのまま
             else if (category === 'hometown') keys.push(player.hometown || '不明');
 
             keys.forEach(key => {
               if (!key || key === '-' || key === '未設定') return;
+              const displayKey = category === 'draft_year' ? `${key}年指名` : key;
+              
               if (!stats[key]) {
-                stats[key] = { name: key, total_hits: 0, total_hr: 0, total_rbi: 0, players: [] };
+                stats[key] = { name: displayKey, total_hits: 0, total_hr: 0, total_rbi: 0, players: [] };
               }
               stats[key].total_hits += (Number(perf.h_hits) || 0);
               stats[key].total_hr += (Number(perf.h_hr) || 0);
@@ -145,49 +157,62 @@ function RankingList() {
         <div className="text-center py-20 text-blue-900 font-black animate-pulse">データを集計中...</div>
       ) : (
         <div className="space-y-3">
-          {ranking.map((item, index) => (
-            <details key={item.name} className="group bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden hover:border-blue-300 transition-colors">
-              <summary className="flex items-center justify-between p-5 cursor-pointer list-none">
-                <div className="flex items-center gap-5">
-                  <div className={`text-2xl font-black italic w-8 ${index < 3 ? 'text-blue-600' : 'text-slate-200'}`}>{index + 1}</div>
-                  <h2 className="text-lg font-bold text-slate-800">{item.name}</h2>
+          {ranking.map((item, index) => {
+            // URL用に変換（ドラフト年などの数字から「年指名」を除去して純粋なキーを取得）
+            const rawName = category === 'draft_year' ? item.name.replace('年指名', '') : item.name;
+            const detailUrl = `/roots/${CATEGORY_URL_MAP[category]}/${encodeURIComponent(rawName)}`;
+
+            return (
+              <div key={item.name} className="group bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden hover:border-blue-300 transition-all hover:-translate-y-1">
+                <div className="flex items-center justify-between p-5">
+                  <Link href={detailUrl} className="flex items-center gap-5 flex-1 group/title">
+                    <div className={`text-2xl font-black italic w-8 ${index < 3 ? 'text-blue-600' : 'text-slate-200'}`}>{index + 1}</div>
+                    <h2 className="text-lg font-bold text-slate-800 group-hover/title:text-blue-600 transition-colors underline decoration-blue-100 decoration-4 underline-offset-4">{item.name}</h2>
+                  </Link>
+                  
+                  <Link href={detailUrl} className="flex gap-6 items-center group/stats">
+                    <div className="text-right leading-none border-r pr-6 border-slate-100">
+                      <p className="text-[10px] text-slate-400 font-black mb-1 uppercase">Hits</p>
+                      <p className="text-2xl font-black text-blue-900">{item.total_hits}</p>
+                    </div>
+                    <div className="text-right leading-none pl-0">
+                      <p className="text-[10px] text-slate-400 font-black mb-1 uppercase">HR</p>
+                      <p className="text-2xl font-black text-red-600">{item.total_hr}</p>
+                    </div>
+                  </Link>
                 </div>
-                <div className="flex gap-6 items-center">
-                  <div className="text-right leading-none border-r pr-6 border-slate-100">
-                    <p className="text-[10px] text-slate-400 font-black mb-1 uppercase">Hits</p>
-                    <p className="text-2xl font-black text-blue-900">{item.total_hits}</p>
+
+                <div className="px-5 md:px-16 pb-6 pt-2 bg-slate-50 border-t border-slate-100">
+                  <p className="text-[9px] font-bold text-slate-400 mb-3 tracking-widest uppercase">Contributing Players</p>
+                  <div className="flex flex-wrap gap-2">
+                    {item.players.sort((a,b)=>b.hits - a.hits).map(p => (
+                      <Link key={p.name} href={`/player/${p.id}`} className="bg-white border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm text-xs flex items-center gap-2 hover:border-blue-500 hover:bg-blue-50 transition-all group/item">
+                        <span className="text-[9px] bg-slate-100 px-1 rounded text-slate-500 font-bold">{p.team}</span>
+                        <span className="font-bold text-slate-700 group-hover/item:text-blue-600 underline decoration-blue-200 decoration-2 underline-offset-4">{p.name}</span>
+                        <span className="text-blue-600 font-black">{p.hits}H</span>
+                      </Link>
+                    ))}
                   </div>
-                  <div className="text-right leading-none pl-0">
-                    <p className="text-[10px] text-slate-400 font-black mb-1 uppercase">HR</p>
-                    <p className="text-2xl font-black text-red-600">{item.total_hr}</p>
-                  </div>
-                </div>
-              </summary>
-              <div className="px-5 md:px-16 pb-6 pt-2 bg-slate-50 border-t border-slate-100">
-                <p className="text-[9px] font-bold text-slate-400 mb-3 tracking-widest uppercase">Contributing Players</p>
-                <div className="flex flex-wrap gap-2">
-                  {item.players.sort((a,b)=>b.hits - a.hits).map(p => (
-                    <Link key={p.name} href={`/player/${p.id}`} className="bg-white border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm text-xs flex items-center gap-2 hover:border-blue-500 hover:bg-blue-50 transition-all group/item">
-                      <span className="text-[9px] bg-slate-100 px-1 rounded text-slate-500 font-bold">{p.team}</span>
-                      <span className="font-bold text-slate-700 group-hover/item:text-blue-600 underline decoration-blue-200 decoration-2 underline-offset-4">{p.name}</span>
-                      <span className="text-blue-600 font-black">{p.hits}H</span>
+                  {/* 詳細ページへのガイドボタン */}
+                  <div className="mt-4 text-right">
+                    <Link href={detailUrl} className="text-[10px] font-black text-blue-500 hover:text-blue-700 uppercase tracking-widest flex items-center justify-end gap-1 group/more">
+                      View Full Ranking
+                      <span className="transition-transform group-hover/more:translate-x-1">→</span>
                     </Link>
-                  ))}
+                  </div>
                 </div>
               </div>
-            </details>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
 
-// --- 3. ページ全体のコンポーネント (これだけを export default する) ---
 export default function Home() {
   return (
     <main className="min-h-screen bg-slate-100 p-4 md:p-8 font-sans text-slate-900">
-      {/* useSearchParams を使う RankingList を Suspense で囲む */}
       <Suspense fallback={<div className="text-center py-20 text-blue-900 font-black">初期化中...</div>}>
         <RankingList />
       </Suspense>
