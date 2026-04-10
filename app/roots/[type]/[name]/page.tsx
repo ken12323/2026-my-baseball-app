@@ -14,17 +14,10 @@ type RankedPlayer = {
   hits: number;
   hr: number;
   avg: number;
-  ops: number;
-  era: number;
-  so: number;
-  wins: number;
   is_pitcher: boolean;
 };
 
-const toF = (val: any) => {
-  const f = parseFloat(val);
-  return isNaN(f) ? 0 : f;
-};
+const toF = (val: any) => parseFloat(val) || 0;
 
 export default function RootsRankingPage() {
   const params = useParams();
@@ -34,15 +27,22 @@ export default function RootsRankingPage() {
 
   const [players, setPlayers] = useState<RankedPlayer[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sortKey, setSortKey] = useState<string>('war'); 
+  const [sortKey, setSortKey] = useState<string>('hits'); // 2026年は安打順をデフォルトに
+
+  const typeLabel: Record<string, string> = {
+    high_school: '高校別',
+    university: '大学別',
+    hometown: '出身地別',
+    draft: 'ドラフト同期',
+    previous_team: '前所属別'
+  };
 
   useEffect(() => {
     async function fetchRanking() {
       try {
         setLoading(true);
-        console.log(`🔍 検索開始: カテゴリ=${type}, 名前=${name}`);
 
-        // 1. 選手リストを取得
+        // 1. カテゴリに該当する選手を Players テーブルから取得
         let query = supabase.from('players').select('*');
         if (type === 'high_school') query = query.eq('high_school', name);
         else if (type === 'university') query = query.eq('university', name);
@@ -50,60 +50,58 @@ export default function RootsRankingPage() {
         else if (type === 'draft') query = query.eq('draft_year', name);
         else if (type === 'previous_team') query = query.or(`prev_team_1.eq.${name},prev_team_2.eq.${name},prev_team_3.eq.${name}`);
 
-        const { data: playerList, error: pErr } = await query;
-        if (pErr || !playerList || playerList.length === 0) {
-          console.error("❌ 選手が見つかりません:", pErr);
-          setPlayers([]);
-          setLoading(false);
-          return;
+        const { data: playerList } = await query;
+        if (!playerList || playerList.length === 0) {
+          setPlayers([]); setLoading(false); return;
         }
 
-        const playerIds = playerList.map(p => p.player_id);
-        console.log("👤 取得選手ID一覧:", playerIds);
+        const ids = playerList.map(p => String(p.player_id).trim());
 
-        // 2. 成績を取得 (あえて'年度'の型不一致を避けるため、後でJSでフィルタリング)
-        const [batting, pitching] = await Promise.all([
-          supabase.from('batting_stats').select('*').in('player_id', playerIds),
-          supabase.from('pitching_stats').select('*').in('player_id', playerIds)
-        ]);
+        // 2. 2026年の全日程の「日次成績」を取得 (TOPページと同じソース)
+        const { data: dailyData } = await supabase
+          .from('daily_performance')
+          .select('*')
+          .in('player_id', ids)
+          .gte('date', '2026-01-01');
 
-        console.log("📊 取得打撃データ数:", batting.data?.length || 0);
-        console.log("⚾ 取得投手データ数:", pitching.data?.length || 0);
+        // 3. 2025年度以前の「過去成績」を取得 (WARなどの参考用)
+        const { data: pastStats } = await supabase
+          .from('batting_stats')
+          .select('*')
+          .in('player_id', ids);
 
-        // 3. マッチング
+        // 4. マッチングと2026年の合計計算
         const combined = playerList.map(p => {
-          // IDを正規化して比較 (数値と文字列の差異を吸収)
-          const normalize = (id: any) => String(id).replace(/^0+/, '');
-          const pid = normalize(p.player_id);
-
-          // 2026年度のデータを抽出
-          const b = batting.data?.find(s => normalize(s.player_id) === pid && String(s.年度) === '2026');
-          const pi = pitching.data?.find(s => normalize(s.player_id) === pid && String(s.年度) === '2026');
+          const pid = String(p.player_id).trim();
           
-          if (!b && !pi) console.warn(`⚠️ 選手ID ${pid} (${p.player_name}) の2026年データが見つかりません`);
+          // 2026年の日次成績を合計する (これがTOPページの数字の正体)
+          const pPerf = (dailyData || []).filter(d => String(d.player_id).trim() === pid);
+          const totalHits = pPerf.reduce((sum, d) => sum + toF(d.h_hits), 0);
+          const totalHR = pPerf.reduce((sum, d) => sum + toF(d.h_hr), 0);
 
-          const isP = p.position_detail === '投手';
+          // 最新の年度の成績を取得 (WARなどのため)
+          const latestPast = (pastStats || [])
+            .filter(s => String(s.player_id).trim() === pid)
+            .sort((a, b) => b.年度 - a.年度)[0];
 
           return {
             player_id: p.player_id,
             player_name: p.player_name,
             team_name: p.team_name,
             position: p.position_detail,
-            is_pitcher: isP,
-            war: isP ? toF(pi?.投手WAR) : toF(b?.野手WAR),
-            hits: toF(b?.安打),
-            hr: toF(b?.本塁打),
-            avg: toF(b?.打率),
-            ops: toF(b?.OPS),
-            era: isP ? (toF(pi?.防御率) === 0 ? 99.99 : toF(pi?.防御率)) : 99.99,
-            so: toF(pi?.三振),
-            wins: toF(pi?.勝利)
+            is_pitcher: p.position_detail === '投手',
+            // 2026年リアルタイム集計値
+            hits: totalHits,
+            hr: totalHR,
+            // 参考値 (最新の年度データがあれば使用)
+            war: toF(latestPast?.野手WAR || latestPast?.投手WAR),
+            avg: toF(latestPast?.打率),
           };
         });
 
         setPlayers(combined);
       } catch (err) {
-        console.error("❌ システムエラー:", err);
+        console.error(err);
       } finally {
         setLoading(false);
       }
@@ -111,21 +109,9 @@ export default function RootsRankingPage() {
     fetchRanking();
   }, [type, name]);
 
-  const sortedPlayers = [...players].sort((a, b) => {
-    if (sortKey === 'era') return a.era - b.era;
-    return (b as any)[sortKey] - (a as any)[sortKey];
-  });
+  const sortedPlayers = [...players].sort((a, b) => (b as any)[sortKey] - (a as any)[sortKey]);
 
-  const SortButton = ({ k, label }: { k: string, label: string }) => (
-    <button 
-      onClick={() => setSortKey(k)}
-      className={`px-4 py-2 rounded-xl text-[11px] font-black transition-all ${sortKey === k ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-200 hover:bg-slate-50'}`}
-    >
-      {label}
-    </button>
-  );
-
-  if (loading) return <div className="p-20 text-center font-black animate-pulse text-blue-600 text-2xl italic">ANALYZING ROOTS...</div>;
+  if (loading) return <div className="p-20 text-center font-black animate-pulse text-blue-600 text-2xl italic">SYNCING REAL-TIME DATA...</div>;
 
   return (
     <main className="min-h-screen bg-slate-50 p-4 md:p-10 text-slate-900">
@@ -133,61 +119,38 @@ export default function RootsRankingPage() {
         <Link href="/" className="text-blue-600 font-black mb-8 inline-block">← TOPへ戻る</Link>
         
         <header className="mb-12 text-center">
-          <div className="inline-block bg-blue-600 text-white px-5 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest shadow-sm mb-4">
-            Category Ranking
-          </div>
           <h1 className="text-5xl md:text-7xl font-black italic text-slate-900 tracking-tighter leading-none">
-            {name}{type === 'draft' && '年ドラフト'}
+            {name} <span className="text-blue-600">Ranking</span>
           </h1>
+          <p className="text-slate-400 font-bold mt-4 uppercase text-[10px] tracking-[0.3em]">2026 Season Real-time Analysis</p>
           
-          <div className="mt-10">
-            <div className="flex flex-wrap justify-center gap-2">
-              <SortButton k="war" label="貢献度(WAR)" />
-              <SortButton k="hits" label="安打" />
-              <SortButton k="hr" label="本塁打" />
-              <SortButton k="avg" label="打率" />
-              <SortButton k="ops" label="OPS" />
-              <SortButton k="era" label="防御率" />
-              <SortButton k="so" label="三振" />
-              <SortButton k="wins" label="勝利" />
-            </div>
+          <div className="mt-10 flex flex-wrap justify-center gap-2">
+            <button onClick={() => setSortKey('hits')} className={`px-5 py-2 rounded-xl text-[11px] font-black transition-all ${sortKey === 'hits' ? 'bg-blue-600 text-white shadow-lg' : 'bg-white border text-slate-400'}`}>HITS (2026)</button>
+            <button onClick={() => setSortKey('hr')} className={`px-5 py-2 rounded-xl text-[11px] font-black transition-all ${sortKey === 'hr' ? 'bg-red-600 text-white shadow-lg' : 'bg-white border text-slate-400'}`}>HR (2026)</button>
+            <button onClick={() => setSortKey('war')} className={`px-5 py-2 rounded-xl text-[11px] font-black transition-all ${sortKey === 'war' ? 'bg-slate-900 text-white shadow-lg' : 'bg-white border text-slate-400'}`}>CAREER WAR</button>
           </div>
         </header>
 
         <div className="space-y-4">
-          {sortedPlayers.length > 0 ? (
-            sortedPlayers.map((p, index) => (
-              <Link href={`/player/${p.player_id}`} key={p.player_id} className="block bg-white rounded-[2rem] p-6 shadow-sm hover:shadow-xl transition-all border border-slate-100 group">
-                <div className="flex items-center gap-6">
-                  <div className="w-12 text-center">
-                    <span className={`text-4xl font-black italic ${index === 0 ? 'text-yellow-400' : index === 1 ? 'text-slate-300' : index === 2 ? 'text-orange-300' : 'text-slate-100'}`}>
-                      {index + 1}
-                    </span>
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-[10px] font-black text-blue-500 uppercase">{p.team_name}</p>
-                    <h2 className="text-2xl font-black text-slate-900 group-hover:text-blue-600 transition-colors">{p.player_name}</h2>
-                    <p className="text-[11px] font-bold text-slate-400 mt-1">{p.position}</p>
-                  </div>
-                  <div className="text-right min-w-[100px] border-l border-slate-50 pl-6">
-                    <p className="text-[9px] font-black text-slate-300 uppercase mb-1">{sortKey}</p>
-                    <div className="text-3xl font-black italic leading-none">
-                      {sortKey === 'war' && (p.war > 0 ? `+${p.war.toFixed(1)}` : p.war.toFixed(1))}
-                      {sortKey === 'hits' && p.hits}
-                      {sortKey === 'hr' && p.hr}
-                      {sortKey === 'avg' && `.${String(p.avg.toFixed(3)).split('.')[1]}`}
-                      {sortKey === 'ops' && p.ops.toFixed(3)}
-                      {sortKey === 'era' && (p.era > 90 ? '-.--' : p.era.toFixed(2))}
-                      {sortKey === 'so' && p.so}
-                      {sortKey === 'wins' && p.wins}
-                    </div>
+          {sortedPlayers.map((p, index) => (
+            <Link href={`/player/${p.player_id}`} key={p.player_id} className="block bg-white rounded-[2rem] p-6 shadow-sm hover:shadow-xl transition-all border border-slate-100 group">
+              <div className="flex items-center gap-6">
+                <div className={`text-4xl font-black italic w-12 text-center ${index === 0 ? 'text-yellow-400' : 'text-slate-100'}`}>{index + 1}</div>
+                <div className="flex-1">
+                  <p className="text-[10px] font-black text-blue-500 uppercase">{p.team_name}</p>
+                  <h2 className="text-2xl font-black text-slate-900 group-hover:text-blue-600 transition-colors">{p.player_name}</h2>
+                  <p className="text-[11px] font-bold text-slate-400">{p.position}</p>
+                </div>
+                <div className="text-right border-l pl-6 min-w-[120px]">
+                  <p className="text-[9px] font-black text-slate-300 uppercase mb-1">2026 SEASON</p>
+                  <div className="flex flex-col">
+                    <span className={`text-3xl font-black italic leading-none ${sortKey === 'hits' ? 'text-blue-900' : 'text-slate-400'}`}>{p.hits}<span className="text-[10px] ml-1 not-italic">H</span></span>
+                    <span className={`text-xl font-black italic mt-1 ${sortKey === 'hr' ? 'text-red-600' : 'text-slate-400'}`}>{p.hr}<span className="text-[10px] ml-1 not-italic">HR</span></span>
                   </div>
                 </div>
-              </Link>
-            ))
-          ) : (
-            <div className="bg-white rounded-[2rem] p-20 text-center text-slate-300 font-black">選手データがありません</div>
-          )}
+              </div>
+            </Link>
+          ))}
         </div>
       </div>
     </main>
