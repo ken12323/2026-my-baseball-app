@@ -188,3 +188,53 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message, logs }, { status: 500 });
   }
 }
+
+// --- 192行目付近から貼り付け ---
+
+// Discord通知用の関数 (TypeScript版)
+async function checkDataIntegrity(playerId: string, playerName: string, webTotalHits: number) {
+  const DISCORD_WEBHOOK_URL = "https://discordapp.com/api/webhooks/1492277461948567665/rfbUsaixRjbtPfAX0Z5w7aw22AtEV_xmAA-3SZ2vxWQOMG9f2myS3QgVlFBVTYkAzGo4";
+
+  try {
+    // 1. Supabaseから2026年の日次合計を取得
+    // すでに定義されている supabase インスタンスを使用します
+    const { data: dailyData, error: dbError } = await supabase
+      .from('daily_performance')
+      .select('h_hits')
+      .eq('player_id', playerId)
+      .gte('date', '2026-01-01');
+
+    if (dbError) throw dbError;
+
+    const dbSumHits = dailyData?.reduce((sum: number, row: any) => sum + Number(row.h_hits), 0) || 0;
+
+    // 2. 公式(Web)の数値と比較
+    if (dbSumHits !== webTotalHits) {
+      const diff = webTotalHits - dbSumHits;
+      
+      const message = {
+        content: `🚨 **データ不整合を検知しました**\n` +
+                 `選手名: **${playerName}** (ID: ${playerId})\n` +
+                 `----------------------------------\n` +
+                 `公式(Web)の通算: ${webTotalHits}本\n` +
+                 `DB内の日次合計: ${dbSumHits}本\n` +
+                 `差分: ${diff > 0 ? '+' : ''}${diff}本\n` +
+                 `----------------------------------\n` +
+                 `👉 daily_performanceテーブルを確認してください。`
+      };
+
+      // Discordへ送信
+      await fetch(DISCORD_WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(message),
+      });
+
+      console.log(`⚠️ ${playerName}: 異常をDiscordに通知しました`);
+    } else {
+      console.log(`✅ ${playerName}: 整合性OK (${dbSumHits}本)`);
+    }
+  } catch (err) {
+    console.error('❌ 照合システムエラー:', err);
+  }
+}
