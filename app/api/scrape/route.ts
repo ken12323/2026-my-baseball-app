@@ -105,11 +105,11 @@ export async function GET(request: Request) {
 
             const id = pInfo.player_id || pInfo.id;
             
-            // データ格納オブジェクトの初期化（SQLのカラム名に準拠）
+            // データ格納オブジェクトの初期化
             if (!statsByDate[actualDate][id]) {
               statsByDate[actualDate][id] = { 
                 player_id: id, player_name: playerName, date: actualDate,
-                h_hits: 0, h_hr: 0, h_rbi: 0, // 互換性維持用
+                h_hits: 0, h_hr: 0, h_rbi: 0,
                 名前: playerName, 年度: targetYear, 
                 試合: 1, 打席: 0, 打数: 0, 得点: 0, 安打: 0, 二塁打: 0, 三塁打: 0, 本塁打: 0, 塁打: 0, 打点: 0, 
                 盗塁: 0, 盗塁刺: 0, 犠打: 0, 犠飛: 0, 四球: 0, 死球: 0, 三振: 0, 併殺打: 0,
@@ -122,7 +122,6 @@ export async function GET(request: Request) {
             const s = statsByDate[actualDate][id];
 
             if (isBatterTable) {
-              // 打撃成績のマッピング
               s.打席 += num(getIdx('打席'));
               s.打数 += num(getIdx('打数'));
               s.安打 += num(getIdx('安打'));
@@ -148,7 +147,6 @@ export async function GET(request: Request) {
               s.OPS = val(getIdx('OPS')) || "0";
               s.塁打 += num(getIdx('塁打'));
             } else if (isPitcherTable) {
-              // 投手成績のマッピング
               s.登板 = 1;
               s.勝利 += num(getIdx('勝利'));
               s.敗戦 += num(getIdx('敗戦'));
@@ -172,13 +170,19 @@ export async function GET(request: Request) {
       }
     }
 
-    // 6. DB更新（古いデータを消して挿入）
+    // 6. DB更新
     for (const d of Object.keys(statsByDate)) {
       const data = Object.values(statsByDate[d]);
-      // 二重登録防止のため、その日のデータを削除してから挿入
       await supabase.from('daily_performance').delete().eq('date', d);
       const { error: insertError } = await supabase.from('daily_performance').insert(data);
       if (insertError) throw insertError;
+
+      // ★【ここに追加】保存が終わったあとに整合性チェックを呼び出す
+      for (const item of data as any[]) {
+        // webTotalHitsには暫定的に item.安打 を渡していますが、
+        // 本来はスポナビの「通算安打」の数値をスクレイピングして渡すのが正解です。
+        await checkDataIntegrity(item.player_id, item.player_name, item.安打);
+      }
     }
 
     return NextResponse.json({ success: true, date: targetDate, game_count: gameUrls.length, logs });
@@ -189,15 +193,11 @@ export async function GET(request: Request) {
   }
 }
 
-// --- 192行目付近から貼り付け ---
-
-// Discord通知用の関数 (TypeScript版)
+// --- 以下、監視用関数本体 ---
 async function checkDataIntegrity(playerId: string, playerName: string, webTotalHits: number) {
   const DISCORD_WEBHOOK_URL = "https://discordapp.com/api/webhooks/1492277461948567665/rfbUsaixRjbtPfAX0Z5w7aw22AtEV_xmAA-3SZ2vxWQOMG9f2myS3QgVlFBVTYkAzGo4";
 
   try {
-    // 1. Supabaseから2026年の日次合計を取得
-    // すでに定義されている supabase インスタンスを使用します
     const { data: dailyData, error: dbError } = await supabase
       .from('daily_performance')
       .select('h_hits')
@@ -208,7 +208,6 @@ async function checkDataIntegrity(playerId: string, playerName: string, webTotal
 
     const dbSumHits = dailyData?.reduce((sum: number, row: any) => sum + Number(row.h_hits), 0) || 0;
 
-    // 2. 公式(Web)の数値と比較
     if (dbSumHits !== webTotalHits) {
       const diff = webTotalHits - dbSumHits;
       
@@ -223,16 +222,11 @@ async function checkDataIntegrity(playerId: string, playerName: string, webTotal
                  `👉 daily_performanceテーブルを確認してください。`
       };
 
-      // Discordへ送信
       await fetch(DISCORD_WEBHOOK_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(message),
       });
-
-      console.log(`⚠️ ${playerName}: 異常をDiscordに通知しました`);
-    } else {
-      console.log(`✅ ${playerName}: 整合性OK (${dbSumHits}本)`);
     }
   } catch (err) {
     console.error('❌ 照合システムエラー:', err);
