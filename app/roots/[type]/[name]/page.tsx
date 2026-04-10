@@ -14,10 +14,20 @@ type RankedPlayer = {
   hits: number;
   hr: number;
   avg: number;
+  ops: number;
+  era: number;
+  so: number;
+  wins: number;
   is_pitcher: boolean;
+  active_year: string;
 };
 
-const toF = (val: any) => parseFloat(val) || 0;
+const toF = (val: any) => {
+  const f = parseFloat(val);
+  return isNaN(f) ? 0 : f;
+};
+
+const normId = (id: any) => String(id || '').trim().replace(/^0+/, '');
 
 export default function RootsRankingPage() {
   const params = useParams();
@@ -27,22 +37,14 @@ export default function RootsRankingPage() {
 
   const [players, setPlayers] = useState<RankedPlayer[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sortKey, setSortKey] = useState<string>('hits'); // 2026年は安打順をデフォルトに
-
-  const typeLabel: Record<string, string> = {
-    high_school: '高校別',
-    university: '大学別',
-    hometown: '出身地別',
-    draft: 'ドラフト同期',
-    previous_team: '前所属別'
-  };
+  const [sortKey, setSortKey] = useState<string>('hits'); // デフォルトは安打
 
   useEffect(() => {
     async function fetchRanking() {
       try {
         setLoading(true);
 
-        // 1. カテゴリに該当する選手を Players テーブルから取得
+        // 1. 選手基本情報を取得
         let query = supabase.from('players').select('*');
         if (type === 'high_school') query = query.eq('high_school', name);
         else if (type === 'university') query = query.eq('university', name);
@@ -55,47 +57,51 @@ export default function RootsRankingPage() {
           setPlayers([]); setLoading(false); return;
         }
 
-        const ids = playerList.map(p => String(p.player_id).trim());
+        const ids = playerList.map(p => normId(p.player_id));
 
-        // 2. 2026年の全日程の「日次成績」を取得 (TOPページと同じソース)
-        const { data: dailyData } = await supabase
-          .from('daily_performance')
-          .select('*')
-          .in('player_id', ids)
-          .gte('date', '2026-01-01');
+        // 2. データを3つのソースから一斉取得
+        const [daily, batting, pitching] = await Promise.all([
+          supabase.from('daily_performance').select('*').in('player_id', ids).gte('date', '2026-01-01'),
+          supabase.from('batting_stats').select('*').in('player_id', ids),
+          supabase.from('pitching_stats').select('*').in('player_id', ids)
+        ]);
 
-        // 3. 2025年度以前の「過去成績」を取得 (WARなどの参考用)
-        const { data: pastStats } = await supabase
-          .from('batting_stats')
-          .select('*')
-          .in('player_id', ids);
-
-        // 4. マッチングと2026年の合計計算
+        // 3. マッチングと統合
         const combined = playerList.map(p => {
-          const pid = String(p.player_id).trim();
-          
-          // 2026年の日次成績を合計する (これがTOPページの数字の正体)
-          const pPerf = (dailyData || []).filter(d => String(d.player_id).trim() === pid);
-          const totalHits = pPerf.reduce((sum, d) => sum + toF(d.h_hits), 0);
-          const totalHR = pPerf.reduce((sum, d) => sum + toF(d.h_hr), 0);
+          const pid = normId(p.player_id);
+          const isP = p.position_detail === '投手';
 
-          // 最新の年度の成績を取得 (WARなどのため)
-          const latestPast = (pastStats || [])
-            .filter(s => String(s.player_id).trim() === pid)
-            .sort((a, b) => b.年度 - a.年度)[0];
+          // A. 2026年リアルタイム集計 (H, HR)
+          const myDaily = (daily.data || []).filter(d => normId(d.player_id) === pid);
+          const realHits = myDaily.reduce((sum, d) => sum + toF(d.h_hits), 0);
+          const realHR = myDaily.reduce((sum, d) => sum + toF(d.h_hr), 0);
+
+          // B. 年度別統計 (WAR, AVG, ERAなど)
+          // 2026年があれば最優先、なければ最新年度を取得
+          const bAll = (batting.data || []).filter(s => normId(s.player_id) === pid).sort((a,b) => toF(b.年度) - toF(a.年度));
+          const pAll = (pitching.data || []).filter(s => normId(s.player_id) === pid).sort((a,b) => toF(b.年度) - toF(a.年度));
+          
+          const bStat = bAll[0];
+          const pStat = pAll[0];
+          const bestStat = isP ? pStat : bStat;
 
           return {
             player_id: p.player_id,
             player_name: p.player_name,
             team_name: p.team_name,
             position: p.position_detail,
-            is_pitcher: p.position_detail === '投手',
-            // 2026年リアルタイム集計値
-            hits: totalHits,
-            hr: totalHR,
-            // 参考値 (最新の年度データがあれば使用)
-            war: toF(latestPast?.野手WAR || latestPast?.投手WAR),
-            avg: toF(latestPast?.打率),
+            is_pitcher: isP,
+            active_year: bestStat ? String(bestStat.年度) : '2026',
+            // H/HRは2026年リアルタイム。ただしリアルタイムが0なら集計表の数値を使う
+            hits: realHits || toF(bStat?.安打),
+            hr: realHR || toF(bStat?.本塁打),
+            // その他の指標は集計表から取得
+            war: isP ? toF(pStat?.投手WAR) : toF(bStat?.野手WAR),
+            avg: toF(bStat?.打率),
+            ops: toF(bStat?.OPS),
+            era: isP ? (toF(pStat?.防御率) === 0 ? 99.99 : toF(pStat?.防御率)) : 99.99,
+            so: toF(pStat?.三振),
+            wins: toF(pStat?.勝利)
           };
         });
 
@@ -109,25 +115,42 @@ export default function RootsRankingPage() {
     fetchRanking();
   }, [type, name]);
 
-  const sortedPlayers = [...players].sort((a, b) => (b as any)[sortKey] - (a as any)[sortKey]);
+  // 並び替え
+  const sortedPlayers = [...players].sort((a, b) => {
+    if (sortKey === 'era') return a.era - b.era;
+    return (b as any)[sortKey] - (a as any)[sortKey];
+  });
 
-  if (loading) return <div className="p-20 text-center font-black animate-pulse text-blue-600 text-2xl italic">SYNCING REAL-TIME DATA...</div>;
+  const SortButton = ({ k, label }: { k: string, label: string }) => (
+    <button 
+      onClick={() => setSortKey(k)}
+      className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all ${sortKey === k ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-200'}`}
+    >
+      {label}
+    </button>
+  );
+
+  if (loading) return <div className="p-20 text-center font-black animate-pulse text-blue-600 text-2xl italic">LOADING {name.toUpperCase()}...</div>;
 
   return (
     <main className="min-h-screen bg-slate-50 p-4 md:p-10 text-slate-900">
       <div className="max-w-3xl mx-auto">
-        <Link href="/" className="text-blue-600 font-black mb-8 inline-block">← TOPへ戻る</Link>
+        <Link href="/" className="text-blue-600 font-black mb-8 inline-block hover:opacity-70">← TOPへ戻る</Link>
         
         <header className="mb-12 text-center">
-          <h1 className="text-5xl md:text-7xl font-black italic text-slate-900 tracking-tighter leading-none">
+          <h1 className="text-5xl md:text-7xl font-black italic text-slate-900 tracking-tighter leading-none mb-8">
             {name} <span className="text-blue-600">Ranking</span>
           </h1>
-          <p className="text-slate-400 font-bold mt-4 uppercase text-[10px] tracking-[0.3em]">2026 Season Real-time Analysis</p>
           
-          <div className="mt-10 flex flex-wrap justify-center gap-2">
-            <button onClick={() => setSortKey('hits')} className={`px-5 py-2 rounded-xl text-[11px] font-black transition-all ${sortKey === 'hits' ? 'bg-blue-600 text-white shadow-lg' : 'bg-white border text-slate-400'}`}>HITS (2026)</button>
-            <button onClick={() => setSortKey('hr')} className={`px-5 py-2 rounded-xl text-[11px] font-black transition-all ${sortKey === 'hr' ? 'bg-red-600 text-white shadow-lg' : 'bg-white border text-slate-400'}`}>HR (2026)</button>
-            <button onClick={() => setSortKey('war')} className={`px-5 py-2 rounded-xl text-[11px] font-black transition-all ${sortKey === 'war' ? 'bg-slate-900 text-white shadow-lg' : 'bg-white border text-slate-400'}`}>CAREER WAR</button>
+          <div className="flex flex-wrap justify-center gap-2 max-w-2xl mx-auto">
+            <SortButton k="war" label="貢献度(WAR)" />
+            <SortButton k="hits" label="安打" />
+            <SortButton k="hr" label="本塁打" />
+            <SortButton k="avg" label="打率" />
+            <SortButton k="ops" label="OPS" />
+            <SortButton k="era" label="防御率" />
+            <SortButton k="so" label="三振" />
+            <SortButton k="wins" label="勝利" />
           </div>
         </header>
 
@@ -135,17 +158,28 @@ export default function RootsRankingPage() {
           {sortedPlayers.map((p, index) => (
             <Link href={`/player/${p.player_id}`} key={p.player_id} className="block bg-white rounded-[2rem] p-6 shadow-sm hover:shadow-xl transition-all border border-slate-100 group">
               <div className="flex items-center gap-6">
-                <div className={`text-4xl font-black italic w-12 text-center ${index === 0 ? 'text-yellow-400' : 'text-slate-100'}`}>{index + 1}</div>
+                <div className={`text-4xl font-black italic w-12 text-center ${index === 0 ? 'text-yellow-400' : index === 1 ? 'text-slate-300' : index === 2 ? 'text-orange-300' : 'text-slate-100'}`}>
+                  {index + 1}
+                </div>
                 <div className="flex-1">
                   <p className="text-[10px] font-black text-blue-500 uppercase">{p.team_name}</p>
                   <h2 className="text-2xl font-black text-slate-900 group-hover:text-blue-600 transition-colors">{p.player_name}</h2>
-                  <p className="text-[11px] font-bold text-slate-400">{p.position}</p>
+                  <div className="flex gap-2 mt-1">
+                     <span className="text-[10px] font-bold text-slate-400">{p.position}</span>
+                     <span className="text-[9px] bg-blue-50 text-blue-400 px-1.5 py-0.5 rounded font-black">{p.active_year} Season</span>
+                  </div>
                 </div>
-                <div className="text-right border-l pl-6 min-w-[120px]">
-                  <p className="text-[9px] font-black text-slate-300 uppercase mb-1">2026 SEASON</p>
-                  <div className="flex flex-col">
-                    <span className={`text-3xl font-black italic leading-none ${sortKey === 'hits' ? 'text-blue-900' : 'text-slate-400'}`}>{p.hits}<span className="text-[10px] ml-1 not-italic">H</span></span>
-                    <span className={`text-xl font-black italic mt-1 ${sortKey === 'hr' ? 'text-red-600' : 'text-slate-400'}`}>{p.hr}<span className="text-[10px] ml-1 not-italic">HR</span></span>
+                <div className="text-right border-l border-slate-50 pl-6 min-w-[110px]">
+                  <p className="text-[9px] font-black text-slate-300 uppercase mb-1">{sortKey}</p>
+                  <div className="text-3xl font-black italic leading-none text-slate-900">
+                    {sortKey === 'war' && (p.war > 0 ? `+${p.war.toFixed(1)}` : p.war.toFixed(1))}
+                    {sortKey === 'hits' && p.hits}
+                    {sortKey === 'hr' && p.hr}
+                    {sortKey === 'avg' && `.${String(p.avg.toFixed(3)).split('.')[1]}`}
+                    {sortKey === 'ops' && p.ops.toFixed(3)}
+                    {sortKey === 'era' && (p.era > 90 ? '-.--' : p.era.toFixed(2))}
+                    {sortKey === 'so' && p.so}
+                    {sortKey === 'wins' && p.wins}
                   </div>
                 </div>
               </div>
