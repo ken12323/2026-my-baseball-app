@@ -64,15 +64,13 @@ export default function RootsRankingPage() {
     fetchRanking();
   }, [type, name, selectedYear]);
 
-  // ★投手と野手を完全分離し、幽霊選手を排除
+  // ★投手スタッツなら投手、野手スタッツなら野手に限定 ＆ 幽霊選手を排除
   const filteredPlayers = players.filter(p => {
-    if (['era', 'wins', 'so'].includes(sortKey)) {
-      return p.is_pitcher && p.ip !== '0' && p.ip !== '0.0' && p.ip !== '';
-    }
-    if (['hits', 'hr', 'avg', 'ops'].includes(sortKey)) {
-      return !p.is_pitcher && p.pa > 0;
-    }
-    return true;
+    const isPitchKey = ['era', 'wins', 'so'].includes(sortKey);
+    const isBatKey = ['hits', 'hr', 'avg', 'ops'].includes(sortKey);
+    if (isPitchKey) return p.is_pitcher && p.ip !== '0' && p.ip !== '0.0' && p.ip !== '';
+    if (isBatKey) return !p.is_pitcher && p.pa > 0;
+    return true; // WARは混合
   });
 
   const sortedPlayers = [...filteredPlayers].sort((a, b) => {
@@ -99,9 +97,10 @@ export default function RootsRankingPage() {
             ))}
           </div>
         </header>
+
         <div className="space-y-4">
           {loading ? (
-            <div className="p-20 text-center font-black animate-pulse text-blue-600 text-2xl italic tracking-tighter">FETCHING DATA...</div>
+            <div className="p-20 text-center font-black animate-pulse text-blue-600 text-2xl italic tracking-tighter uppercase">Fetching...</div>
           ) : sortedPlayers.length > 0 ? (
             sortedPlayers.map((p, index) => (
               <Link href={`/player/${p.player_id}`} key={p.player_id} className="block bg-white rounded-[2rem] p-6 shadow-sm hover:shadow-xl border group">
@@ -115,12 +114,14 @@ export default function RootsRankingPage() {
                   <div className="text-right border-l pl-6 min-w-[110px]">
                     <p className="text-[9px] font-black text-slate-300 uppercase mb-1">{sortKey}</p>
                     <div className="text-3xl font-black italic text-slate-900">
-                      {sortKey === 'hits' && p.hits} {sortKey === 'hr' && p.hr}
+                      {sortKey === 'hits' && p.hits}
+                      {sortKey === 'hr' && p.hr}
                       {sortKey === 'avg' && `.${String(p.avg.toFixed(3)).split('.')[1]}`}
                       {sortKey === 'ops' && p.ops.toFixed(3)}
                       {sortKey === 'war' && (p.war > 0 ? `+${p.war.toFixed(1)}` : p.war.toFixed(1))}
                       {sortKey === 'era' && (p.era > 90 ? '-.--' : p.era.toFixed(2))}
-                      {sortKey === 'so' && p.so} {sortKey === 'wins' && p.wins}
+                      {sortKey === 'so' && p.so}
+                      {sortKey === 'wins' && p.wins}
                     </div>
                   </div>
                 </div>
