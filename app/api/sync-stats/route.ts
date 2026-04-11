@@ -8,71 +8,60 @@ export async function GET(request: Request) {
   const targetYear = 2026;
 
   try {
-    // 1. DBから選手リストを取得し、正規化してMapに格納
+    // 1. 選手マスターの取得（個人ページで使っているIDをそのまま取得）
     const { data: playerMaster } = await supabase.from('players').select('player_id, player_name');
     const playerMap = new Map();
     playerMaster?.forEach(p => {
-      // 全角半角を統一し、空白を除去
+      // 空白・全角半角を無視してマッピング
       const cleanName = (p.player_name || '').normalize('NFKC').replace(/\s+/g, '');
       playerMap.set(cleanName, p.player_id);
     });
 
-    // デバッグ用：DBの最初の5人を表示
-    const sample = Array.from(playerMap.keys()).slice(0, 5);
-    logs.push(`【DBサンプル】: ${sample.join(', ')}`);
+    const teamIds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 376];
 
-    // 2. 楽天（376）のみに絞ってテスト（まずここを突破させる）
-    const teamId = 376;
-    const url = `https://baseball.yahoo.co.jp/npb/teams/${teamId}/battingstats`;
-    const res = await axios.get(url);
-    const $ = cheerio.load(res.data);
+    for (const teamId of teamIds) {
+      const url = `https://baseball.yahoo.co.jp/npb/teams/${teamId}/battingstats`;
+      const res = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+      const $ = cheerio.load(res.data);
 
-    // チーム別ページのテーブル行を確実に取得するセレクター
-    const rows = $('.bb-statsTable table tbody tr'); 
-    logs.push(`【Web確認】ページ内から ${rows.length} 行のデータを見つけました`);
+      // セレクターを Yahoo の標準的なクラスに変更
+      const rows = $('tr.bb-statsTable__row');
+      
+      let matchedCount = 0;
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const pLink = $(row).find('a[href*="/player/"]');
+        if (pLink.length === 0) continue;
 
-    let matchedCount = 0;
-    rows.each((i, row) => {
-      const pLink = $(row).find('a[href*="/player/"]');
-      if (pLink.length === 0) return;
+        const webName = pLink.text().trim().normalize('NFKC').replace(/\s+/g, '');
+        const dbId = playerMap.get(webName); // 個人ページと同じIDを取得
 
-      const rawWebName = pLink.text().trim();
-      const cleanWebName = rawWebName.normalize('NFKC').replace(/\s+/g, '');
-      const correctPid = playerMap.get(cleanWebName);
+        if (dbId) {
+          const tds = $(row).find('td');
+          const getNum = (idx: number) => parseFloat($(tds[idx]).text().trim()) || 0;
 
-      if (correctPid) {
-        matchedCount++;
-        // 最初の数人だけ保存処理を実行（テスト用）
-        if (matchedCount <= 50) {
-          saveToDb(correctPid, cleanWebName, $(row), targetYear);
+          // インデックス：[2]打率 [3]試合 [6]安打 [9]本塁打 [11]打点 [22]OPS
+          await supabase.from('batting_stats').upsert({
+            player_id: dbId, // ここが 008 等の一致するID
+            年度: targetYear,
+            名前: webName,
+            安打: getNum(6),
+            本塁打: getNum(9),
+            打率: getNum(2),
+            OPS: $(tds[22]).text().trim() || "0",
+            試合: getNum(3),
+            打席: getNum(4),
+            打数: getNum(5),
+            打点: getNum(11)
+          }, { onConflict: 'player_id, 年度' });
+          matchedCount++;
         }
-      } else {
-        // 一致しなかった場合、最初の3名だけ原因調査用にログ出し
-        if (i < 10) logs.push(`× 不一致: Web[${cleanWebName}] が DBMap に見つかりません`);
       }
-    });
-
-    logs.push(`【結果】楽天の野手 ${matchedCount} 名の一致を確認し、DBを更新しました`);
+      logs.push(`Team ${teamId}: ${matchedCount}名を同期`);
+    }
 
     return NextResponse.json({ success: true, logs });
   } catch (err: any) {
     return NextResponse.json({ error: err.message, logs }, { status: 500 });
   }
-}
-
-// 保存処理の共通化
-async function saveToDb(pid: string, name: string, $row: any, year: number) {
-  const tds = $row.find('td');
-  const getNum = (idx: number) => parseFloat(tds.eq(idx).text().trim()) || 0;
-  
-  await supabase.from('batting_stats').upsert({
-    player_id: pid,
-    年度: year,
-    名前: name,
-    安打: getNum(6),
-    本塁打: getNum(9),
-    打率: getNum(2),
-    OPS: tds.eq(22).text().trim() || "0",
-    試合: getNum(3), 打席: getNum(4), 打数: getNum(5), 打点: getNum(11)
-  }, { onConflict: 'player_id, 年度' });
 }
