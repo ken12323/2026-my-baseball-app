@@ -22,7 +22,6 @@ type RankedPlayer = {
 };
 
 const toF = (val: any) => parseFloat(val) || 0;
-const normId = (id: any) => String(id || '').trim().replace(/^0+/, '');
 
 export default function RootsRankingPage() {
   const params = useParams();
@@ -52,23 +51,34 @@ export default function RootsRankingPage() {
         if (!playerList || playerList.length === 0) {
           setPlayers([]); setLoading(false); return;
         }
-        const ids = playerList.map(p => normId(p.player_id));
 
-        // 2. データの取得 (2026年を含め、すべて stats テーブルから取得)
-        // SQLで確認した通り、'年度' は bigint なので数値で検索します
-        const { data: batting } = await supabase.from('batting_stats').select('*').in('player_id', ids).eq('年度', selectedYear);
-        const { data: pitching } = await supabase.from('pitching_stats').select('*').in('player_id', ids).eq('年度', selectedYear);
+        // ★修正点：IDを加工（normId）せず、DBの生の値をそのまま使う
+        const ids = playerList.map(p => p.player_id);
+
+        // 2. データの取得 (年度は数値 2026 等で指定)
+        const { data: batting } = await supabase
+          .from('batting_stats')
+          .select('*')
+          .in('player_id', ids)
+          .eq('年度', selectedYear);
+
+        const { data: pitching } = await supabase
+          .from('pitching_stats')
+          .select('*')
+          .in('player_id', ids)
+          .eq('年度', selectedYear);
 
         // 3. マッチング処理
         const combined = playerList.map(p => {
-          const pid = normId(p.player_id);
+          const pid = p.player_id; // 加工なしのID
           const isP = p.position_detail === '投手';
-          const bStat = (batting || []).find(s => normId(s.player_id) === pid);
-          const pStat = (pitching || []).find(s => normId(s.player_id) === pid);
 
-          // すべて集計表（stats）の数値をそのまま使用
+          // DBのそのままのIDで検索結果から抽出
+          const bStat = (batting || []).find(s => s.player_id === pid);
+          const pStat = (pitching || []).find(s => s.player_id === pid);
+
           return {
-            player_id: p.player_id,
+            player_id: pid,
             player_name: p.player_name,
             team_name: p.team_name,
             position: p.position_detail,
@@ -86,7 +96,7 @@ export default function RootsRankingPage() {
 
         setPlayers(combined);
       } catch (err) {
-        console.error(err);
+        console.error('Fetch Error:', err);
       } finally {
         setLoading(false);
       }
@@ -112,7 +122,6 @@ export default function RootsRankingPage() {
             {name} <span className="text-blue-600">Stats</span>
           </h1>
 
-          {/* 年度切り替えタブ */}
           <div className="flex justify-center mb-8">
             <div className="inline-flex bg-slate-200 p-1 rounded-2xl">
               {[2026, 2025, 2024].map(year => (
