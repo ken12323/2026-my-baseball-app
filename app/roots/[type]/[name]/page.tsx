@@ -6,19 +6,10 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 
 type RankedPlayer = {
-  player_id: string;
-  player_name: string;
-  team_name: string;
-  position: string;
-  war: number;
-  hits: number;
-  hr: number;
-  avg: number;
-  ops: number;
-  era: number;
-  so: number;
-  wins: number;
-  is_pitcher: boolean;
+  player_id: string; player_name: string; team_name: string; position: string;
+  war: number; hits: number; hr: number; avg: number; ops: number;
+  era: number; so: number; wins: number; is_pitcher: boolean;
+  pa: number; ip: string;
 };
 
 const toF = (val: any) => parseFloat(val) || 0;
@@ -49,47 +40,39 @@ export default function RootsRankingPage() {
         if (!playerList) return;
 
         const ids = playerList.map(p => p.player_id);
-
         const { data: batting } = await supabase.from('batting_stats').select('*').in('player_id', ids).eq('年度', selectedYear);
         const { data: pitching } = await supabase.from('pitching_stats').select('*').in('player_id', ids).eq('年度', selectedYear);
 
         const combined = playerList.map(p => {
-          const isP = p.position_detail === '投手';
+          const isP = p.position_detail?.includes('投手');
           const bStat = (batting || []).find(s => s.player_id === p.player_id);
           const pStat = (pitching || []).find(s => s.player_id === p.player_id);
 
           return {
-            player_id: p.player_id,
-            player_name: p.player_name,
-            team_name: p.team_name,
-            position: p.position_detail,
-            is_pitcher: isP,
-            hits: toF(bStat?.安打),
-            hr: toF(bStat?.本塁打),
-            avg: toF(bStat?.打率),
-            ops: toF(bStat?.OPS),
+            player_id: p.player_id, player_name: p.player_name, team_name: p.team_name, position: p.position_detail, is_pitcher: isP,
+            hits: toF(bStat?.安打), hr: toF(bStat?.本塁打), avg: toF(bStat?.打率), ops: toF(bStat?.OPS),
+            pa: toF(bStat?.打席), ip: String(pStat?.投球回 || '0'),
             war: isP ? toF(pStat?.投手WAR) : toF(bStat?.野手WAR),
-            era: isP ? toF(pStat?.防御率) : 99.99,
-            so: isP ? toF(pStat?.三振) : toF(bStat?.三振), // 投手なら奪三振、野手なら三振
+            era: isP ? (toF(pStat?.防御率) || 99.99) : 99.99,
+            so: isP ? toF(pStat?.三振) : toF(bStat?.三振), 
             wins: isP ? toF(pStat?.勝利) : 0
           };
         });
         setPlayers(combined);
-      } finally {
-        setLoading(false);
-      }
+      } finally { setLoading(false); }
     }
     fetchRanking();
-  }, [type, name, selectedYear, sortKey]);
+  }, [type, name, selectedYear]);
 
-  // ★重要：投手スタッツなら投手のみ、野手スタッツなら野手のみに完全分離
+  // ★投手と野手を完全分離し、幽霊選手を排除
   const filteredPlayers = players.filter(p => {
-    const isPitchingStat = ['era', 'wins', 'so'].includes(sortKey);
-    const isBattingStat = ['hits', 'hr', 'avg', 'ops'].includes(sortKey);
-    
-    if (isPitchingStat) return p.is_pitcher;
-    if (isBattingStat) return !p.is_pitcher;
-    return true; // WARなどは混合
+    if (['era', 'wins', 'so'].includes(sortKey)) {
+      return p.is_pitcher && p.ip !== '0' && p.ip !== '0.0' && p.ip !== '';
+    }
+    if (['hits', 'hr', 'avg', 'ops'].includes(sortKey)) {
+      return !p.is_pitcher && p.pa > 0;
+    }
+    return true;
   });
 
   const sortedPlayers = [...filteredPlayers].sort((a, b) => {
@@ -106,27 +89,22 @@ export default function RootsRankingPage() {
           <div className="flex justify-center mb-8">
             <div className="inline-flex bg-slate-200 p-1 rounded-2xl">
               {[2026, 2025, 2024].map(year => (
-                <button key={year} onClick={() => setSelectedYear(year)} className={`px-6 py-2 rounded-xl text-[11px] font-black transition-all ${selectedYear === year ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
-                  {year} {year === 2026 ? '通算' : '確定'}
-                </button>
+                <button key={year} onClick={() => setSelectedYear(year)} className={`px-6 py-2 rounded-xl text-[11px] font-black transition-all ${selectedYear === year ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>{year} {year === 2026 ? '通算' : '確定'}</button>
               ))}
             </div>
           </div>
           <div className="flex flex-wrap justify-center gap-2 pt-6 border-t">
             {['hits', 'hr', 'avg', 'ops', 'war', 'era', 'so', 'wins'].map(k => (
-              <button key={k} onClick={() => setSortKey(k)} className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all ${sortKey === k ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-slate-400 border hover:bg-slate-50'}`}>
-                {k.toUpperCase()}
-              </button>
+              <button key={k} onClick={() => setSortKey(k)} className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all ${sortKey === k ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-slate-400 border hover:bg-slate-50'}`}>{k.toUpperCase()}</button>
             ))}
           </div>
         </header>
-
         <div className="space-y-4">
           {loading ? (
             <div className="p-20 text-center font-black animate-pulse text-blue-600 text-2xl italic tracking-tighter">FETCHING DATA...</div>
           ) : sortedPlayers.length > 0 ? (
             sortedPlayers.map((p, index) => (
-              <Link href={`/player/${p.player_id}`} key={p.player_id} className="block bg-white rounded-[2rem] p-6 shadow-sm hover:shadow-xl transition-all border border-slate-100 group">
+              <Link href={`/player/${p.player_id}`} key={p.player_id} className="block bg-white rounded-[2rem] p-6 shadow-sm hover:shadow-xl border group">
                 <div className="flex items-center gap-6">
                   <div className={`text-4xl font-black italic w-12 text-center ${index === 0 ? 'text-yellow-400' : 'text-slate-100'}`}>{index + 1}</div>
                   <div className="flex-1 min-w-0">
@@ -137,20 +115,18 @@ export default function RootsRankingPage() {
                   <div className="text-right border-l pl-6 min-w-[110px]">
                     <p className="text-[9px] font-black text-slate-300 uppercase mb-1">{sortKey}</p>
                     <div className="text-3xl font-black italic text-slate-900">
-                      {sortKey === 'hits' && p.hits}
-                      {sortKey === 'hr' && p.hr}
+                      {sortKey === 'hits' && p.hits} {sortKey === 'hr' && p.hr}
                       {sortKey === 'avg' && `.${String(p.avg.toFixed(3)).split('.')[1]}`}
                       {sortKey === 'ops' && p.ops.toFixed(3)}
                       {sortKey === 'war' && (p.war > 0 ? `+${p.war.toFixed(1)}` : p.war.toFixed(1))}
                       {sortKey === 'era' && (p.era > 90 ? '-.--' : p.era.toFixed(2))}
-                      {sortKey === 'so' && p.so}
-                      {sortKey === 'wins' && p.wins}
+                      {sortKey === 'so' && p.so} {sortKey === 'wins' && p.wins}
                     </div>
                   </div>
                 </div>
               </Link>
             ))
-          ) : <div className="p-20 text-center text-slate-300 font-black italic uppercase">No Data Found</div>}
+          ) : <div className="p-20 text-center text-slate-300 font-black italic uppercase">No Stats Recorded</div>}
         </div>
       </div>
     </main>
