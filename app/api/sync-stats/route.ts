@@ -8,6 +8,7 @@ export async function GET(request: Request) {
   const targetYear = 2026;
 
   try {
+    // 1. 選手マスター取得 (01005134 形式のID)
     const { data: playerMaster } = await supabase.from('players').select('player_id, player_name');
     const playerMap = new Map();
     playerMaster?.forEach(p => {
@@ -25,9 +26,11 @@ export async function GET(request: Request) {
         const res = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
         const $ = cheerio.load(res.data);
 
-        // 列のタイトルを取得してインデックスを特定
+        // ★重要：ヘッダーから全ての空白を消して列を特定する（安　打 → 安打）
         const headers: string[] = [];
-        $('table thead th').each((_, th) => { headers.push($(th).text().trim()); });
+        $('table thead th').each((_, th) => { 
+          headers.push($(th).text().replace(/\s+/g, '')); 
+        });
 
         const getIdx = (name: string) => headers.indexOf(name);
         const rows = $('table tbody tr');
@@ -50,21 +53,18 @@ export async function GET(request: Request) {
           const num = (name: string) => parseFloat(val(name)) || 0;
 
           if (!t.isP) {
-            // 野手：個人ページと同じ batting_stats テーブルを更新
+            // 個人ページと同じテーブルへ保存
             await supabase.from('batting_stats').upsert({
-              player_id: correctPid, // 01005134 形式
+              player_id: correctPid,
               年度: targetYear,
               名前: webName,
-              安打: num('安打'),
+              安打: num('安打'), // 「安　打」を検知可能に
               本塁打: num('本塁打'),
-              打率: num('打率'),
+              打率: num('打率'),  // 「打　率」を検知可能に
               OPS: val('OPS'),
-              試合: num('試合'),
-              打数: num('打数'),
-              打点: num('打点')
+              試合: num('試合'), 打数: num('打数'), 打点: num('打点')
             }, { onConflict: 'player_id, 年度' });
           } else {
-            // 投手：pitching_stats テーブルを更新
             await supabase.from('pitching_stats').upsert({
               player_id: correctPid,
               年度: targetYear,
@@ -72,9 +72,7 @@ export async function GET(request: Request) {
               防御率: num('防御率'),
               勝利: num('勝利'),
               三振: num('三振'),
-              登板: num('登板'),
-              敗戦: num('敗戦'),
-              投球回: val('投球回') || val('回数')
+              登板: num('登板'), 敗戦: num('敗戦'), 投球回: val('投球回') || val('回数')
             }, { onConflict: 'player_id, 年度' });
           }
           count++;
