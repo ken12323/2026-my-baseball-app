@@ -8,85 +8,71 @@ export async function GET(request: Request) {
   const targetYear = 2026;
 
   try {
-    // 1. マスターデータの取得 (008等のIDマッピング)
+    // 1. DBから選手リストを取得し、正規化してMapに格納
     const { data: playerMaster } = await supabase.from('players').select('player_id, player_name');
     const playerMap = new Map();
     playerMaster?.forEach(p => {
-      const cleanName = (p.player_name || '').replace(/\s+/g, '');
+      // 全角半角を統一し、空白を除去
+      const cleanName = (p.player_name || '').normalize('NFKC').replace(/\s+/g, '');
       playerMap.set(cleanName, p.player_id);
     });
-    logs.push(`【準備】DB登録選手数: ${playerMap.size}名`);
 
-    const teamIds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 376];
+    // デバッグ用：DBの最初の5人を表示
+    const sample = Array.from(playerMap.keys()).slice(0, 5);
+    logs.push(`【DBサンプル】: ${sample.join(', ')}`);
 
-    for (const teamId of teamIds) {
-      // --- 野手成績同期 ---
-      const bUrl = `https://baseball.yahoo.co.jp/npb/teams/${teamId}/battingstats`;
-      const bRes = await axios.get(bUrl);
-      const $b = cheerio.load(bRes.data);
-      const bRows = $b('.bb-statsTable__row');
-      
-      let bCount = 0;
-      for (let i = 0; i < bRows.length; i++) {
-        const row = bRows[i];
-        const pLink = $b(row).find('a[href*="/player/"]');
-        if (pLink.length === 0) continue;
+    // 2. 楽天（376）のみに絞ってテスト（まずここを突破させる）
+    const teamId = 376;
+    const url = `https://baseball.yahoo.co.jp/npb/teams/${teamId}/battingstats`;
+    const res = await axios.get(url);
+    const $ = cheerio.load(res.data);
 
-        const pName = pLink.text().trim().replace(/\s+/g, '');
-        const correctPid = playerMap.get(pName);
-        if (!correctPid) continue;
+    // チーム別ページのテーブル行を確実に取得するセレクター
+    const rows = $('.bb-statsTable table tbody tr'); 
+    logs.push(`【Web確認】ページ内から ${rows.length} 行のデータを見つけました`);
 
-        const tds = $b(row).find('td');
-        const getNum = (idx: number) => parseFloat($b(tds[idx]).text().trim()) || 0;
+    let matchedCount = 0;
+    rows.each((i, row) => {
+      const pLink = $(row).find('a[href*="/player/"]');
+      if (pLink.length === 0) return;
 
-        await supabase.from('batting_stats').upsert({
-          player_id: correctPid,
-          年度: targetYear,
-          名前: pName,
-          安打: getNum(6),     // 安打はインデックス6
-          本塁打: getNum(9),   // 本塁打はインデックス9
-          打率: getNum(2),     // 打率はインデックス2
-          OPS: $b(tds[22]).text().trim() || "0",
-          試合: getNum(3), 打席: getNum(4), 打数: getNum(5), 打点: getNum(11)
-        }, { onConflict: 'player_id, 年度' });
-        bCount++;
+      const rawWebName = pLink.text().trim();
+      const cleanWebName = rawWebName.normalize('NFKC').replace(/\s+/g, '');
+      const correctPid = playerMap.get(cleanWebName);
+
+      if (correctPid) {
+        matchedCount++;
+        // 最初の数人だけ保存処理を実行（テスト用）
+        if (matchedCount <= 50) {
+          saveToDb(correctPid, cleanWebName, $(row), targetYear);
+        }
+      } else {
+        // 一致しなかった場合、最初の3名だけ原因調査用にログ出し
+        if (i < 10) logs.push(`× 不一致: Web[${cleanWebName}] が DBMap に見つかりません`);
       }
+    });
 
-      // --- 投手成績同期 ---
-      const pUrl = `https://baseball.yahoo.co.jp/npb/teams/${teamId}/pitchingstats`;
-      const pRes = await axios.get(pUrl);
-      const $p = cheerio.load(pRes.data);
-      const pRows = $p('.bb-statsTable__row');
-
-      let pCount = 0;
-      for (let i = 0; i < pRows.length; i++) {
-        const row = pRows[i];
-        const pLink = $p(row).find('a[href*="/player/"]');
-        if (pLink.length === 0) continue;
-
-        const pName = pLink.text().trim().replace(/\s+/g, '');
-        const correctPid = playerMap.get(pName);
-        if (!correctPid) continue;
-
-        const tds = $p(row).find('td');
-        const getNum = (idx: number) => parseFloat($p(tds[idx]).text().trim()) || 0;
-
-        await supabase.from('pitching_stats').upsert({
-          player_id: correctPid,
-          年度: targetYear,
-          名前: pName,
-          防御率: getNum(2),   // 防御率はインデックス2
-          勝利: getNum(4),     // 勝利はインデックス4
-          三振: getNum(14),    // 奪三振はインデックス14
-          登板: getNum(3), 敗戦: getNum(5), 投球回: $p(tds[12]).text().trim()
-        }, { onConflict: 'player_id, 年度' });
-        pCount++;
-      }
-      logs.push(`【成功】TeamID ${teamId}: 野手${bCount}名 / 投手${pCount}名 同期完了`);
-    }
+    logs.push(`【結果】楽天の野手 ${matchedCount} 名の一致を確認し、DBを更新しました`);
 
     return NextResponse.json({ success: true, logs });
   } catch (err: any) {
     return NextResponse.json({ error: err.message, logs }, { status: 500 });
   }
+}
+
+// 保存処理の共通化
+async function saveToDb(pid: string, name: string, $row: any, year: number) {
+  const tds = $row.find('td');
+  const getNum = (idx: number) => parseFloat(tds.eq(idx).text().trim()) || 0;
+  
+  await supabase.from('batting_stats').upsert({
+    player_id: pid,
+    年度: year,
+    名前: name,
+    安打: getNum(6),
+    本塁打: getNum(9),
+    打率: getNum(2),
+    OPS: tds.eq(22).text().trim() || "0",
+    試合: getNum(3), 打席: getNum(4), 打数: getNum(5), 打点: getNum(11)
+  }, { onConflict: 'player_id, 年度' });
 }
