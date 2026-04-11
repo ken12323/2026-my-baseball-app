@@ -16,7 +16,6 @@ export async function GET(request: Request) {
     });
 
     const teamIds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 376];
-
     for (const teamId of teamIds) {
       const types = [{ s: 'battingstats', isP: false }, { s: 'pitchingstats', isP: true }];
       for (const t of types) {
@@ -49,20 +48,24 @@ export async function GET(request: Request) {
           const num = (name: string) => parseFloat(val(name)) || 0;
 
           if (!t.isP) {
+            // 野手：WARはページに存在しないため、更新対象から外して既存値を守る
             await supabase.from('batting_stats').upsert({
               player_id: correctPid,
               年度: targetYear,
               名前: webName,
               安打: num('安打'), 本塁打: num('本塁打'), 打率: num('打率'),
-              OPS: val('OPS'), 三振: num('三振'), 打点: num('打点'),
-              試合: num('試合'), 打数: num('打数'), 打席: num('打席')
+              OPS: val('OPS'), 
+              三振: num('三振'), // 「三　振」を正規化で取得
+              打点: num('打点'), 試合: num('試合'), 打数: num('打数'), 打席: num('打席')
             }, { onConflict: 'player_id, 年度' });
           } else {
+            // 投手：投手WARも同様に保護
             await supabase.from('pitching_stats').upsert({
               player_id: correctPid,
               年度: targetYear,
               名前: webName,
-              防御率: num('防御率'), 勝利: num('勝利'), 三振: num('三振'),
+              防御率: num('防御率'), 勝利: num('勝利'), 
+              三振: num('三振'), // 「奪三振」または「三振」を正規化で取得
               登板: num('登板'), 敗戦: num('敗戦'), 投球回: val('投球回') || val('回数')
             }, { onConflict: 'player_id, 年度' });
           }
