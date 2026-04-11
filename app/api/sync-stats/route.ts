@@ -8,69 +8,81 @@ export async function GET(request: Request) {
   const targetYear = 2026;
 
   try {
-    // 1. マスターデータの確認
-    const { data: playerMaster, error: masterError } = await supabase.from('players').select('player_id, player_name');
-    if (masterError) throw new Error(`Master Fetch Error: ${masterError.message}`);
-    
+    // 1. マスターデータの取得 (008等のIDマッピング)
+    const { data: playerMaster } = await supabase.from('players').select('player_id, player_name');
     const playerMap = new Map();
     playerMaster?.forEach(p => {
       const cleanName = (p.player_name || '').replace(/\s+/g, '');
       playerMap.set(cleanName, p.player_id);
     });
-    logs.push(`DB登録選手数: ${playerMap.size}名`);
+    logs.push(`【準備】DB登録選手数: ${playerMap.size}名`);
 
     const teamIds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 376];
 
     for (const teamId of teamIds) {
-      let matchedInTeam = 0;
-      // Yahooはリダイレクトするため、直接 stats/batter を叩くのが確実です
-      const url = `https://baseball.yahoo.co.jp/npb/teams/${teamId}/stats/batter`;
-      const res = await axios.get(url, { timeout: 10000 });
-      const $ = cheerio.load(res.data);
-
-      const rows = $('.bb-statsTable__row'); // tbody内の行
+      // --- 野手成績同期 ---
+      const bUrl = `https://baseball.yahoo.co.jp/npb/teams/${teamId}/battingstats`;
+      const bRes = await axios.get(bUrl);
+      const $b = cheerio.load(bRes.data);
+      const bRows = $b('.bb-statsTable__row');
       
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        const pLink = $(row).find('a[href*="/player/"]');
+      let bCount = 0;
+      for (let i = 0; i < bRows.length; i++) {
+        const row = bRows[i];
+        const pLink = $b(row).find('a[href*="/player/"]');
         if (pLink.length === 0) continue;
 
         const pName = pLink.text().trim().replace(/\s+/g, '');
         const correctPid = playerMap.get(pName);
+        if (!correctPid) continue;
 
-        if (!correctPid) {
-          // logs.push(`× 不一致: ${pName} (DBに存在しません)`);
-          continue;
-        }
+        const tds = $b(row).find('td');
+        const getNum = (idx: number) => parseFloat($b(tds[idx]).text().trim()) || 0;
 
-        const tds = $(row).find('td');
-        const getVal = (idx: number) => $(tds[idx]).text().trim();
-        const getNum = (idx: number) => parseFloat(getVal(idx)) || 0;
-
-        // 【デバッグ済】チーム別野手成績テーブルのインデックス
-        // [2]打率 [3]試合 [4]打席 [5]打数 [6]安打 [9]本塁打 [11]打点 [22]OPS
-        const hits = getNum(6);
-        const { error: upsertError } = await supabase.from('batting_stats').upsert({
+        await supabase.from('batting_stats').upsert({
           player_id: correctPid,
           年度: targetYear,
           名前: pName,
-          安打: hits,
-          本塁打: getNum(9),
-          打率: getNum(2),
-          OPS: getVal(22) || "0",
-          試合: getNum(3),
-          打席: getNum(4),
-          打数: getNum(5),
-          打点: getNum(11)
+          安打: getNum(6),     // 安打はインデックス6
+          本塁打: getNum(9),   // 本塁打はインデックス9
+          打率: getNum(2),     // 打率はインデックス2
+          OPS: $b(tds[22]).text().trim() || "0",
+          試合: getNum(3), 打席: getNum(4), 打数: getNum(5), 打点: getNum(11)
         }, { onConflict: 'player_id, 年度' });
-
-        if (upsertError) {
-          logs.push(`!! 保存失敗: ${pName} (${upsertError.message})`);
-        } else {
-          matchedInTeam++;
-        }
+        bCount++;
       }
-      logs.push(`Team ${teamId}: ${matchedInTeam}名のデータを同期しました`);
+
+      // --- 投手成績同期 ---
+      const pUrl = `https://baseball.yahoo.co.jp/npb/teams/${teamId}/pitchingstats`;
+      const pRes = await axios.get(pUrl);
+      const $p = cheerio.load(pRes.data);
+      const pRows = $p('.bb-statsTable__row');
+
+      let pCount = 0;
+      for (let i = 0; i < pRows.length; i++) {
+        const row = pRows[i];
+        const pLink = $p(row).find('a[href*="/player/"]');
+        if (pLink.length === 0) continue;
+
+        const pName = pLink.text().trim().replace(/\s+/g, '');
+        const correctPid = playerMap.get(pName);
+        if (!correctPid) continue;
+
+        const tds = $p(row).find('td');
+        const getNum = (idx: number) => parseFloat($p(tds[idx]).text().trim()) || 0;
+
+        await supabase.from('pitching_stats').upsert({
+          player_id: correctPid,
+          年度: targetYear,
+          名前: pName,
+          防御率: getNum(2),   // 防御率はインデックス2
+          勝利: getNum(4),     // 勝利はインデックス4
+          三振: getNum(14),    // 奪三振はインデックス14
+          登板: getNum(3), 敗戦: getNum(5), 投球回: $p(tds[12]).text().trim()
+        }, { onConflict: 'player_id, 年度' });
+        pCount++;
+      }
+      logs.push(`【成功】TeamID ${teamId}: 野手${bCount}名 / 投手${pCount}名 同期完了`);
     }
 
     return NextResponse.json({ success: true, logs });
