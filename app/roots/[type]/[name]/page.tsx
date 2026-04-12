@@ -29,9 +29,6 @@ const toF = (val: any) => {
   return isNaN(f) ? 0 : f;
 };
 
-// IDを8桁の文字列に正規化する関数（鉄則をプログラム内で担保）
-const normId = (id: any) => String(id).padStart(8, '0');
-
 // 表示名のマッピング
 const SORT_OPTIONS: Record<string, string> = {
   hits: '安打',
@@ -69,26 +66,40 @@ export default function RootsRankingPage() {
         const { data: playerList } = await query;
         if (!playerList) return;
 
-        // DBに0落ちで保存されている可能性を考慮し、検索時はそのままのIDリストを使用
-        const ids = playerList.map(p => String(p.player_id));
+        // --- ステップ2: クエリの強化（0落ちIDと8桁IDの両方を検索対象にする） ---
+        const searchIds = playerList.flatMap(p => {
+          const id = String(p.player_id);
+          return [id.padStart(8, '0'), id.replace(/^0+/, '')];
+        });
+
         const [bRes, pRes] = await Promise.all([
-          supabase.from('batting_stats').select('*').in('player_id', ids).eq('年度', selectedYear),
-          supabase.from('pitching_stats').select('*').in('player_id', ids).eq('年度', selectedYear)
+          supabase.from('batting_stats').select('*').in('player_id', searchIds).eq('年度', selectedYear),
+          supabase.from('pitching_stats').select('*').in('player_id', searchIds).eq('年度', selectedYear)
         ]);
 
         const batting = bRes.data || [];
         const pitching = pRes.data || [];
 
+        // --- ステップ1: 生データのデバッグ出力 ---
+        console.log("--- Powerful NPB Analytics Debug ---");
+        console.log("検索対象IDリスト:", searchIds);
+        console.log("DB取得結果(野手):", batting);
+        console.log("DB取得結果(投手):", pitching);
+
         const combined = playerList.map(p => {
-          const targetId = normId(p.player_id);
+          // 数値変換して比較することで、文字列の桁数問題を完全に回避
+          const pIdNum = parseInt(String(p.player_id), 10);
           const isP = p.position_detail?.includes('投手');
           
-          // IDを8桁に正規化して比較（これで 1105159 と 01105159 が一致する）
-          const bStat = batting.find(s => normId(s.player_id) === targetId);
-          const pStat = pitching.find(s => normId(s.player_id) === targetId);
+          const bStat = batting.find(s => parseInt(String(s.player_id), 10) === pIdNum);
+          const pStat = pitching.find(s => parseInt(String(s.player_id), 10) === pIdNum);
 
           const rawB = bStat as any;
           const rawP = pStat as any;
+
+          // --- ステップ2: 日本語カラムへのブラケット記法アクセス ---
+          const playerWar = isP ? toF(rawP?.['投手WAR']) : toF(rawB?.['野手WAR']);
+          const playerSo = isP ? toF(rawP?.['三振']) : toF(rawB?.['三振']);
 
           return {
             player_id: p.player_id,
@@ -102,8 +113,8 @@ export default function RootsRankingPage() {
             hr: toF(bStat?.本塁打),
             avg: toF(bStat?.打率),
             ops: toF(bStat?.OPS),
-            war: isP ? (toF(rawP?.投手WAR) || toF(rawP?.war)) : (toF(rawB?.野手WAR) || toF(rawB?.war)),
-            so: isP ? toF(rawP?.三振) : toF(rawB?.三振),
+            war: playerWar,
+            so: playerSo,
             era: isP ? (toF(pStat?.防御率) || 99.99) : 99.99,
             wins: isP ? toF(pStat?.勝利) : 0,
             ip: String(pStat?.投球回 || '0')
@@ -125,7 +136,6 @@ export default function RootsRankingPage() {
 
   const sortedPlayers = [...filteredPlayers].sort((a, b) => {
     if (sortKey === 'era') return a.era - b.era;
-    // 数値が同じなら、打席数やWARが高い方を優先して幽霊選手を排除
     if ((b as any)[sortKey] === (a as any)[sortKey]) return b.war - a.war;
     return (b as any)[sortKey] - (a as any)[sortKey];
   });
@@ -167,7 +177,6 @@ export default function RootsRankingPage() {
                       <span className="text-[10px] font-bold text-slate-400 uppercase">{p.position}</span>
                     </div>
 
-                    {/* ★主要成績バーの追加 */}
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-black text-slate-400 uppercase tracking-tighter border-t pt-2">
                       <div className="flex gap-2">
                         <span>{p.games}試合</span>
@@ -176,9 +185,9 @@ export default function RootsRankingPage() {
                         <span>{p.hr}HR</span>
                       </div>
                       <div className="flex gap-2 border-l pl-3">
-                        <span className="text-slate-900">打率 .{String(p.avg.toFixed(3)).split('.')[1]}</span>
-                        <span className="text-slate-900">OPS {p.ops.toFixed(3)}</span>
-                        <span className="text-blue-600 bg-blue-50 px-2 py-0.5 rounded italic">WAR {p.war.toFixed(1)}</span>
+                        <span className="text-slate-900 font-bold">打率 .{String(p.avg.toFixed(3)).split('.')[1]}</span>
+                        <span className="text-slate-900 font-bold">OPS {p.ops.toFixed(3)}</span>
+                        <span className="text-blue-600 bg-blue-50 px-2 py-0.5 rounded italic font-black">WAR {p.war.toFixed(1)}</span>
                       </div>
                     </div>
                   </div>
