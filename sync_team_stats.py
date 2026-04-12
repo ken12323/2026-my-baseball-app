@@ -4,6 +4,7 @@ import requests
 import time
 from bs4 import BeautifulSoup
 from supabase import create_client, Client
+import unicodedata
 
 # --- 設定 ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -15,30 +16,20 @@ TEAMS = {
     "西武": 7, "日ハム": 8, "千葉": 9, "オリックス": 11, "ソフトバンク": 12, "楽天": 376
 }
 
-# --- 【修正】NPB公式表記（2025以前のデータと完全一致） ---
+# --- NPB公式表記（2025以前のデータと完全一致） ---
 TEAM_NAME_MAP = {
-    "巨人": "読　売",
-    "ヤクルト": "東京ヤクルト",
-    "横浜": "横浜DeNA",
-    "中日": "中　日",
-    "阪神": "阪　神",
-    "広島": "広島東洋",
-    "西武": "埼玉西武",
-    "日ハム": "北海道日本ハム",
-    "千葉": "千葉ロッテ",
-    "オリックス": "オリックス",
-    "ソフトバンク": "福岡ソフトバンク",
-    "楽天": "東北楽天"
+    "巨人": "読　売", "ヤクルト": "東京ヤクルト", "横浜": "横浜DeNA",
+    "中日": "中　日", "阪神": "阪　神", "広島": "広島東洋",
+    "西武": "埼玉西武", "日ハム": "北海道日本ハム", "千葉": "千葉ロッテ",
+    "オリックス": "オリックス", "ソフトバンク": "福岡ソフトバンク", "楽天": "東北楽天"
 }
 
-# 【修正】背番号をカラムリストに追加
 BATTER_DB_COLS = [
     "player_id", "名前", "年度", "所属球団", "背番号", "試合", "打席", "打数", "得点", "安打", 
     "二塁打", "三塁打", "本塁打", "塁打", "打点", "盗塁", "盗塁刺", "犠打", "犠飛", 
     "四球", "死球", "三振", "併殺打", "打率", "長打率", "出塁率", "野手WAR", "wOBA", "OPS", "ISOp", "ランク"
 ]
 
-# 【修正】背番号をカラムリストに追加
 PITCHER_DB_COLS = [
     "player_id", "名前", "年度", "所属球団", "背番号", "登板", "勝利", "敗戦", "セーブ", "ホールド", "HP",
     "完投", "完封", "無四球", "打者", "投球回", "安打", "本塁打", "四球", "死球", "三振",
@@ -73,8 +64,13 @@ def scrape_team(team_name, team_id, mode="battingstats"):
     for table in tables:
         thead = table.find("thead")
         if not thead: continue
-        # 【重要】スペースを全て除去して「安打」「四球」などを確実に特定する
-        cols = [th.text.strip().replace('\u3000', '').replace(' ', '') for th in thead.find_all("th")]
+        
+        # 【修正】正規化（NFKC）を行い、正規表現ですべての空白文字を確実に除去
+        cols = []
+        for th in thead.find_all("th"):
+            clean_text = unicodedata.normalize('NFKC', th.text)
+            clean_text = re.sub(r'\s+', '', clean_text)
+            cols.append(clean_text)
         
         try:
             name_idx = cols.index("選手名")
@@ -87,24 +83,25 @@ def scrape_team(team_name, team_id, mode="battingstats"):
             player_a = tds[name_idx].find("a")
             if not player_a: continue
             
-            pid = re.search(r'/player/(\d+)/', player_a['href']).group(1)
+            raw_pid = re.search(r'/player/(\d+)/', player_a['href']).group(1)
+            # ★鉄則：IDを確実に8桁の文字列にする（0落ち防止）
+            safe_pid = str(raw_pid).zfill(8)
             
-            if pid not in player_map:
-                player_map[pid] = {"player_id": pid, "名前": player_a.text.strip(), "年度": "2026", "所属球団": official_team_name}
+            if safe_pid not in player_map:
+                clean_name = re.sub(r'\s+', '', unicodedata.normalize('NFKC', player_a.text.strip()))
+                player_map[safe_pid] = {"player_id": safe_pid, "名前": clean_name, "年度": "2026", "所属球団": official_team_name}
             
-            s = player_map[pid]
+            s = player_map[safe_pid]
             for i, td in enumerate(tds):
                 if i >= len(cols): break
                 c_name = cols[i]
                 val = td.text.strip().replace('-', '0')
                 
-                # キーの正規化
                 if c_name in ["与四球", "四球"]: c_name = "四球"
                 if c_name in ["与死球", "死球"]: c_name = "死球"
                 if c_name == "奪三振": c_name = "三振"
                 if c_name in ["HP", "ＨＰ"]: c_name = "HP"
                 
-                # 【修正】背番号を無視リストから削除
                 if c_name in ["選手名", "位置", "順位", "奪三振率"]: continue
                 
                 if c_name == "投球回":
@@ -112,7 +109,6 @@ def scrape_team(team_name, team_id, mode="battingstats"):
                 elif "." in val or c_name in ["打率", "防御率"]:
                     s[c_name] = safe_float(val)
                 else:
-                    # 背番号などは数値として保存される
                     s[c_name] = max(s.get(c_name, 0), safe_int(val))
 
     return list(player_map.values())
@@ -127,7 +123,6 @@ def calculate_metrics(batters, pitchers):
         hbp = b.get("死球", 0)
         tb = b.get("塁打", 0)
 
-        # 計算結果を浮動小数点でセット
         b["出塁率"] = round((h + bb + hbp) / pa, 3) if pa > 0 else 0.0
         b["長打率"] = round(tb / ab, 3) if ab > 0 else 0.0
         b["OPS"] = dotFormat(b["出塁率"] + b["長打率"])
@@ -173,7 +168,7 @@ def main():
         if final_pitchers:
             for i in range(0, len(final_pitchers), 50):
                 supabase.table("pitching_stats").upsert(final_pitchers[i:i+50], on_conflict="player_id,年度").execute()
-        print("✅ 全修正（背番号含む）が完了しました。")
+        print("✅ 全修正が完了しました。")
     except Exception as e:
         print(f"❌ エラー: {e}")
         exit(1)
