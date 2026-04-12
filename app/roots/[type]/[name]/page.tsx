@@ -11,17 +11,8 @@ type RankedPlayer = {
   team_name: string; 
   position: string;
   is_pitcher: boolean;
-  games: number;
-  pa: number;
-  hits: number;
-  hr: number;
-  avg: number;
-  ops: number;
-  war: number;
-  era: number;
-  so: number;
-  wins: number;
-  ip: string;
+  games: number; pa: number; hits: number; hr: number; avg: number; ops: number; war: number;
+  era: number; so: number; wins: number; ip: string;
 };
 
 const toF = (val: any) => {
@@ -29,16 +20,16 @@ const toF = (val: any) => {
   return isNaN(f) ? 0 : f;
 };
 
-// 表示名のマッピング
+const findValue = (obj: any, keys: string[]) => {
+  if (!obj) return 0;
+  for (const key of keys) {
+    if (obj[key] !== undefined && obj[key] !== null) return toF(obj[key]);
+  }
+  return 0;
+};
+
 const SORT_OPTIONS: Record<string, string> = {
-  hits: '安打',
-  hr: '本塁打',
-  avg: '打率',
-  ops: 'OPS',
-  war: 'WAR',
-  era: '防御率',
-  so: '三振',
-  wins: '勝利'
+  hits: '安打', hr: '本塁打', avg: '打率', ops: 'OPS', war: 'WAR', era: '防御率', so: '三振', wins: '勝利'
 };
 
 export default function RootsRankingPage() {
@@ -49,7 +40,7 @@ export default function RootsRankingPage() {
 
   const [players, setPlayers] = useState<RankedPlayer[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sortKey, setSortKey] = useState<string>('avg'); 
+  const [sortKey, setSortKey] = useState<string>('war'); 
   const [selectedYear, setSelectedYear] = useState<number>(2026);
 
   useEffect(() => {
@@ -64,45 +55,39 @@ export default function RootsRankingPage() {
         else if (type === 'previous_team') query = query.or(`prev_team_1.eq.${name},prev_team_2.eq.${name},prev_team_3.eq.${name}`);
 
         const { data: playerList } = await query;
-        if (!playerList) return;
+        if (!playerList || playerList.length === 0) return;
 
-        // --- ステップ2: クエリの強化（0落ちIDと8桁IDの両方を検索対象にする） ---
+        // ★IDの検索条件を徹底的に全パターン用意（0埋め、0落とし、トリム）
         const searchIds = playerList.flatMap(p => {
-          const id = String(p.player_id);
-          return [id.padStart(8, '0'), id.replace(/^0+/, '')];
+          const s = String(p.player_id).trim();
+          return [s, s.padStart(8, '0'), s.replace(/^0+/, '')];
         });
 
+        // 重複を除去
+        const uniqueSearchIds = Array.from(new Set(searchIds));
+
         const [bRes, pRes] = await Promise.all([
-          supabase.from('batting_stats').select('*').in('player_id', searchIds).eq('年度', selectedYear),
-          supabase.from('pitching_stats').select('*').in('player_id', searchIds).eq('年度', selectedYear)
+          supabase.from('batting_stats').select('*').in('player_id', uniqueSearchIds).eq('年度', selectedYear),
+          supabase.from('pitching_stats').select('*').in('player_id', uniqueSearchIds).eq('年度', selectedYear)
         ]);
 
         const batting = bRes.data || [];
         const pitching = pRes.data || [];
 
-        // --- ステップ1: 生データのデバッグ出力 ---
-        console.log("--- Powerful NPB Analytics Debug ---");
-        console.log("検索対象IDリスト:", searchIds);
-        console.log("DB取得結果(野手):", batting);
-        console.log("DB取得結果(投手):", pitching);
+        // デバッグログ：ここが0件ならクエリ条件が間違っている
+        console.log(`[Debug] 2026年取得結果: 野手${batting.length}件, 投手${pitching.length}件`);
 
         const combined = playerList.map(p => {
-          // 数値変換して比較することで、文字列の桁数問題を完全に回避
-          const pIdNum = parseInt(String(p.player_id), 10);
+          const pidString = String(p.player_id).trim();
+          const pIdNum = parseInt(pidString, 10);
           const isP = p.position_detail?.includes('投手');
           
+          // IDを数値変換して照合（これで 0123 と 123 が一致する）
           const bStat = batting.find(s => parseInt(String(s.player_id), 10) === pIdNum);
           const pStat = pitching.find(s => parseInt(String(s.player_id), 10) === pIdNum);
 
-          const rawB = bStat as any;
-          const rawP = pStat as any;
-
-          // --- ステップ2: 日本語カラムへのブラケット記法アクセス ---
-          const playerWar = isP ? toF(rawP?.['投手WAR']) : toF(rawB?.['野手WAR']);
-          const playerSo = isP ? toF(rawP?.['三振']) : toF(rawB?.['三振']);
-
           return {
-            player_id: p.player_id,
+            player_id: pidString.padStart(8, '0'),
             player_name: p.player_name,
             team_name: p.team_name,
             position: p.position_detail,
@@ -113,8 +98,8 @@ export default function RootsRankingPage() {
             hr: toF(bStat?.本塁打),
             avg: toF(bStat?.打率),
             ops: toF(bStat?.OPS),
-            war: playerWar,
-            so: playerSo,
+            war: isP ? findValue(pStat, ['投手WAR', 'war', 'WAR']) : findValue(bStat, ['野手WAR', 'war', 'WAR']),
+            so: isP ? findValue(pStat, ['三振', '奪三振']) : findValue(bStat, ['三振']),
             era: isP ? (toF(pStat?.防御率) || 99.99) : 99.99,
             wins: isP ? toF(pStat?.勝利) : 0,
             ip: String(pStat?.投球回 || '0')
@@ -126,17 +111,23 @@ export default function RootsRankingPage() {
     fetchRanking();
   }, [type, name, selectedYear]);
 
+  // ★「NO STATS」を防ぐためのフィルタ
   const filteredPlayers = players.filter(p => {
+    // 2026年は数値が低くても「記録（試合、打席、または投球回）」があれば出す
+    const hasAnyRecord = p.games > 0 || p.pa > 0 || (p.ip !== '0' && p.ip !== '');
+    
     const isPitchKey = ['era', 'wins', 'so'].includes(sortKey);
     const isBatKey = ['hits', 'hr', 'avg', 'ops'].includes(sortKey);
-    if (isPitchKey) return p.is_pitcher && p.ip !== '0' && p.ip !== '0.0';
-    if (isBatKey) return p.pa > 0;
-    return (p.pa > 0 || p.ip !== '0');
+    
+    if (isPitchKey) return p.is_pitcher && hasAnyRecord;
+    if (isBatKey) return hasAnyRecord;
+    return hasAnyRecord;
   });
 
   const sortedPlayers = [...filteredPlayers].sort((a, b) => {
     if (sortKey === 'era') return a.era - b.era;
-    if ((b as any)[sortKey] === (a as any)[sortKey]) return b.war - a.war;
+    // 指標が同じならWARでサブソート、それも同じならPA
+    if ((b as any)[sortKey] === (a as any)[sortKey]) return b.war - a.war || b.pa - a.pa;
     return (b as any)[sortKey] - (a as any)[sortKey];
   });
 
@@ -146,7 +137,6 @@ export default function RootsRankingPage() {
         <Link href="/" className="text-blue-600 font-black mb-8 inline-flex items-center gap-1 text-sm">← TOP</Link>
         <header className="mb-12 text-center">
           <h1 className="text-5xl md:text-7xl font-black italic mb-6">{name} <span className="text-blue-600">Stats</span></h1>
-          
           <div className="flex justify-center mb-8">
             <div className="inline-flex bg-slate-200 p-1 rounded-2xl">
               {[2026, 2025, 2024].map(year => (
@@ -154,7 +144,6 @@ export default function RootsRankingPage() {
               ))}
             </div>
           </div>
-
           <div className="flex flex-wrap justify-center gap-2 pt-6 border-t">
             {Object.entries(SORT_OPTIONS).map(([key, label]) => (
               <button key={key} onClick={() => setSortKey(key)} className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all ${sortKey === key ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-slate-400 border hover:bg-slate-50'}`}>{label}</button>
@@ -176,13 +165,9 @@ export default function RootsRankingPage() {
                       <h2 className="text-2xl md:text-3xl font-black text-slate-900 group-hover:text-blue-600 transition-colors leading-none">{p.player_name}</h2>
                       <span className="text-[10px] font-bold text-slate-400 uppercase">{p.position}</span>
                     </div>
-
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-black text-slate-400 uppercase tracking-tighter border-t pt-2">
                       <div className="flex gap-2">
-                        <span>{p.games}試合</span>
-                        <span>{p.pa}打席</span>
-                        <span>{p.hits}安打</span>
-                        <span>{p.hr}HR</span>
+                        <span>{p.games}試合</span> <span>{p.pa}打席</span> <span>{p.hits}安打</span> <span>{p.hr}HR</span>
                       </div>
                       <div className="flex gap-2 border-l pl-3">
                         <span className="text-slate-900 font-bold">打率 .{String(p.avg.toFixed(3)).split('.')[1]}</span>
@@ -191,7 +176,6 @@ export default function RootsRankingPage() {
                       </div>
                     </div>
                   </div>
-                  
                   <div className="text-right border-l pl-6 min-w-[110px]">
                     <p className="text-[9px] font-black text-slate-300 uppercase mb-1">{SORT_OPTIONS[sortKey]}</p>
                     <div className="text-3xl md:text-4xl font-black italic text-slate-900 leading-none">
@@ -208,7 +192,12 @@ export default function RootsRankingPage() {
                 </div>
               </Link>
             ))
-          ) : <div className="p-20 text-center text-slate-300 font-black italic uppercase">No Stats Recorded</div>}
+          ) : (
+            <div className="p-20 text-center text-slate-300 font-black italic uppercase">
+              No Stats Recorded for 2026<br/>
+              <span className="text-[10px] font-normal lowercase tracking-widest opacity-50">check debug console for details</span>
+            </div>
+          )}
         </div>
       </div>
     </main>
