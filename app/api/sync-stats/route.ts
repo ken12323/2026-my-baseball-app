@@ -19,10 +19,15 @@ export async function GET(request: Request) {
   try {
     // 1. 選手マスターの取得と正規化
     const { data: playerMaster } = await supabase.from('players').select('player_id, player_name');
+    
+    // 名前の空白を完全に除去して Map を作成（「筒香　嘉智」を「筒香嘉智」として保持）
     const playerMap = new Map();
     playerMaster?.forEach(p => {
       const cleanName = (p.player_name || '').normalize('NFKC').replace(/\s+/g, '');
-      playerMap.set(cleanName, p.player_id);
+      // すでに登録されている場合は、最初に見つかったID（本来のID）を優先
+      if (!playerMap.has(cleanName)) {
+        playerMap.set(cleanName, String(p.player_id).padStart(8, '0'));
+      }
     });
 
     const teamIds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 376];
@@ -50,9 +55,14 @@ export async function GET(request: Request) {
           const pLink = $(row).find('a[href*="/player/"]');
           if (pLink.length === 0) continue;
 
+          // スクレイピング元の名前から空白を除去して正規化
           const webName = pLink.text().trim().normalize('NFKC').replace(/\s+/g, '');
           let correctPid = playerMap.get(webName);
-          if (!correctPid) continue;
+          
+          if (!correctPid) {
+            // マスターに存在しない名前の場合はスキップ（不正なIDの生成を防止）
+            continue;
+          }
 
           // ★鉄則：IDを確実に8桁の文字列にする（0落ち防止）
           const safePid = String(correctPid).padStart(8, '0');
@@ -65,12 +75,12 @@ export async function GET(request: Request) {
           const num = (name: string) => parseFloat(val(name)) || 0;
 
           if (!t.isP) {
-            // 野手：既存のWAR（計算値）を守るためupsert対象を限定
+            // 野手：既存のWAR（計算値）を守るため、upsert時に上書きする項目を限定
             await supabase.from('batting_stats').upsert({
               player_id: safePid,
               年度: targetYear,
               名前: webName,
-              所属球団: teamName, // NULL重複防止のため追加
+              所属球団: teamName, // NULL重複防止
               安打: num('安打'), 
               本塁打: num('本塁打'), 
               打率: num('打率'),
@@ -82,19 +92,19 @@ export async function GET(request: Request) {
               打席: num('打席')
             }, { onConflict: 'player_id, 年度' });
           } else {
-            // 投手：既存の投手WARを守る
+            // 投手：既存の投手WARを保護
             await supabase.from('pitching_stats').upsert({
               player_id: safePid,
               年度: targetYear,
               名前: webName,
-              所属球団: teamName, // NULL重複防止のため追加
+              所属球団: teamName, // NULL重複防止
               防御率: num('防御率'), 
               勝利: num('勝利'), 
               三振: num('三振'), 
               登板: num('登板'), 
               敗戦: num('敗戦'), 
               投球回: val('投球回') || val('回数'),
-              四球: num('四球'), // FIP計算用に必要なら追加（任意）
+              四球: num('四球'),
               死球: num('死球'),
               本塁打: num('本塁打'),
               自責点: num('自責点')
