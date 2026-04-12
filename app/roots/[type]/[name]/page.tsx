@@ -57,13 +57,11 @@ export default function RootsRankingPage() {
         const { data: playerList } = await query;
         if (!playerList || playerList.length === 0) return;
 
-        // ★IDの検索条件を徹底的に全パターン用意（0埋め、0落とし、トリム）
         const searchIds = playerList.flatMap(p => {
           const s = String(p.player_id).trim();
           return [s, s.padStart(8, '0'), s.replace(/^0+/, '')];
         });
 
-        // 重複を除去
         const uniqueSearchIds = Array.from(new Set(searchIds));
 
         const [bRes, pRes] = await Promise.all([
@@ -74,20 +72,17 @@ export default function RootsRankingPage() {
         const batting = bRes.data || [];
         const pitching = pRes.data || [];
 
-        // デバッグログ：ここが0件ならクエリ条件が間違っている
-        console.log(`[Debug] 2026年取得結果: 野手${batting.length}件, 投手${pitching.length}件`);
-
         const combined = playerList.map(p => {
-          const pidString = String(p.player_id).trim();
-          const pIdNum = parseInt(pidString, 10);
+          // ★鉄則：IDを確実に8桁の文字列にする
+          const safeMasterId = String(p.player_id).trim().padStart(8, '0');
           const isP = p.position_detail?.includes('投手');
           
-          // IDを数値変換して照合（これで 0123 と 123 が一致する）
-          const bStat = batting.find(s => parseInt(String(s.player_id), 10) === pIdNum);
-          const pStat = pitching.find(s => parseInt(String(s.player_id), 10) === pIdNum);
+          // ★修正：parseIntを排除し、文字列同士で比較
+          const bStat = batting.find(s => String(s.player_id).trim().padStart(8, '0') === safeMasterId);
+          const pStat = pitching.find(s => String(s.player_id).trim().padStart(8, '0') === safeMasterId);
 
           return {
-            player_id: pidString.padStart(8, '0'),
+            player_id: safeMasterId,
             player_name: p.player_name,
             team_name: p.team_name,
             position: p.position_detail,
@@ -111,9 +106,7 @@ export default function RootsRankingPage() {
     fetchRanking();
   }, [type, name, selectedYear]);
 
-  // ★「NO STATS」を防ぐためのフィルタ
   const filteredPlayers = players.filter(p => {
-    // 2026年は数値が低くても「記録（試合、打席、または投球回）」があれば出す
     const hasAnyRecord = p.games > 0 || p.pa > 0 || (p.ip !== '0' && p.ip !== '');
     
     const isPitchKey = ['era', 'wins', 'so'].includes(sortKey);
@@ -126,7 +119,6 @@ export default function RootsRankingPage() {
 
   const sortedPlayers = [...filteredPlayers].sort((a, b) => {
     if (sortKey === 'era') return a.era - b.era;
-    // 指標が同じならWARでサブソート、それも同じならPA
     if ((b as any)[sortKey] === (a as any)[sortKey]) return b.war - a.war || b.pa - a.pa;
     return (b as any)[sortKey] - (a as any)[sortKey];
   });
@@ -195,7 +187,6 @@ export default function RootsRankingPage() {
           ) : (
             <div className="p-20 text-center text-slate-300 font-black italic uppercase">
               No Stats Recorded for 2026<br/>
-              <span className="text-[10px] font-normal lowercase tracking-widest opacity-50">check debug console for details</span>
             </div>
           )}
         </div>
