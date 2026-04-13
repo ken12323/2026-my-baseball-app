@@ -61,57 +61,113 @@ function RankingList() {
         if (period === 'yesterday') targetQueryDate = yesterdayStr;
         setDisplayDate(period === 'season' ? '2026年 通算' : targetQueryDate);
 
-        let query = supabase.from('daily_performance').select('*');
-        if (period === 'today') query = query.eq('date', todayStr);
-        else if (period === 'yesterday') query = query.eq('date', yesterdayStr);
-        else if (period === 'weekly') query = query.gte('date', weekAgoStr);
-
-        const [{ data: performance }, { data: playersData }] = await Promise.all([
-          query,
-          supabase.from('players').select('*')
-        ]);
-
         const stats: Record<string, RankingRow> = {};
-        if (performance && playersData) {
-          performance.forEach((perf) => {
-            const player = playersData.find((p) => String(p.player_id) === String(perf.player_id));
-            if (!player) return;
 
-            let keys: string[] = [];
-            if (category === 'high_school') keys.push(player.high_school || '海外/その他');
-            else if (category === 'university' && player.university) keys.push(player.university);
-            else if (category === 'prev_team') {
-              [player.prev_team_1, player.prev_team_2, player.prev_team_3].forEach(t => t && keys.push(t));
-            } else if (category === 'draft_year' && player.draft_year) keys.push(player.draft_year);
-            else if (category === 'hometown') keys.push(player.hometown || '不明');
+        // 【修正の核心】seasonの場合はbatting_statsから取得、それ以外はdaily_performanceから取得
+       if (period === 'season') {
+          const [{ data: battingData }, { data: playersData }] = await Promise.all([
+            // ★ 修正1: 日本語カラム名でのParserErrorを防ぐため '*' に変更
+            supabase.from('batting_stats').select('*').eq('年度', 2026),
+            supabase.from('players').select('*')
+          ]);
 
-            keys.forEach(key => {
-              if (!key || key === '-' || key === '未設定') return;
-              const displayKey = category === 'draft_year' ? `${key}年指名` : key;
-              if (!stats[key]) {
-                stats[key] = { name: displayKey, total_hits: 0, total_hr: 0, total_rbi: 0, players: [] };
-              }
-              stats[key].total_hits += (Number(perf.h_hits) || 0);
-              stats[key].total_hr += (Number(perf.h_hr) || 0);
-              stats[key].total_rbi += (Number(perf.h_rbi) || 0);
+          if (battingData && playersData) {
+            battingData.forEach((row) => {
+              // ★ 修正2: TSの型エラー（プロパティが存在しません）を防ぐため any でキャスト
+              const bat = row as any; 
+              const safeId = String(bat.player_id).padStart(8, '0');
+              const player = playersData.find((p) => String(p.player_id).padStart(8, '0') === safeId);
+              if (!player) return;
 
-              const pName = player.player_name || '不明';
-              const pIdx = stats[key].players.findIndex(p => p.name === pName);
-              if (pIdx === -1) {
-                stats[key].players.push({ 
-                  id: player.player_id, 
-                  name: pName, 
-                  hits: Number(perf.h_hits) || 0, 
-                  hr: Number(perf.h_hr) || 0, 
+              let keys: string[] = [];
+              if (category === 'high_school') keys.push(player.high_school || '海外/その他');
+              else if (category === 'university' && player.university) keys.push(player.university);
+              else if (category === 'prev_team') {
+                [player.prev_team_1, player.prev_team_2, player.prev_team_3].forEach(t => t && keys.push(t));
+              } else if (category === 'draft_year' && player.draft_year) keys.push(player.draft_year);
+              else if (category === 'hometown') keys.push(player.hometown || '不明');
+
+              keys.forEach(key => {
+                if (!key || key === '-' || key === '未設定') return;
+                const displayKey = category === 'draft_year' ? `${key}年指名` : key;
+                if (!stats[key]) {
+                  stats[key] = { name: displayKey, total_hits: 0, total_hr: 0, total_rbi: 0, players: [] };
+                }
+                
+                const hits = Number(bat.安打) || 0;
+                const hr = Number(bat.本塁打) || 0;
+                const rbi = Number(bat.打点) || 0;
+
+                stats[key].total_hits += hits;
+                stats[key].total_hr += hr;
+                stats[key].total_rbi += rbi;
+
+                const pName = player.player_name || '不明';
+                stats[key].players.push({
+                  id: safeId,
+                  name: pName,
+                  hits: hits,
+                  hr: hr,
                   team: player.team_name || '不明'
                 });
-              } else {
-                stats[key].players[pIdx].hits += (Number(perf.h_hits) || 0);
-                stats[key].players[pIdx].hr += (Number(perf.h_hr) || 0);
-              }
+              });
             });
-          });
+          }
+        } else {
+          // today, yesterday, weekly の処理 (既存のdaily_performanceを利用)
+          let query = supabase.from('daily_performance').select('*');
+          if (period === 'today') query = query.eq('date', todayStr);
+          else if (period === 'yesterday') query = query.eq('date', yesterdayStr);
+          else if (period === 'weekly') query = query.gte('date', weekAgoStr);
+
+          const [{ data: performance }, { data: playersData }] = await Promise.all([
+            query,
+            supabase.from('players').select('*')
+          ]);
+
+          if (performance && playersData) {
+            performance.forEach((perf) => {
+              const safeId = String(perf.player_id).padStart(8, '0');
+              const player = playersData.find((p) => String(p.player_id).padStart(8, '0') === safeId);
+              if (!player) return;
+
+              let keys: string[] = [];
+              if (category === 'high_school') keys.push(player.high_school || '海外/その他');
+              else if (category === 'university' && player.university) keys.push(player.university);
+              else if (category === 'prev_team') {
+                [player.prev_team_1, player.prev_team_2, player.prev_team_3].forEach(t => t && keys.push(t));
+              } else if (category === 'draft_year' && player.draft_year) keys.push(player.draft_year);
+              else if (category === 'hometown') keys.push(player.hometown || '不明');
+
+              keys.forEach(key => {
+                if (!key || key === '-' || key === '未設定') return;
+                const displayKey = category === 'draft_year' ? `${key}年指名` : key;
+                if (!stats[key]) {
+                  stats[key] = { name: displayKey, total_hits: 0, total_hr: 0, total_rbi: 0, players: [] };
+                }
+                stats[key].total_hits += (Number(perf.h_hits) || 0);
+                stats[key].total_hr += (Number(perf.h_hr) || 0);
+                stats[key].total_rbi += (Number(perf.h_rbi) || 0);
+
+                const pName = player.player_name || '不明';
+                const pIdx = stats[key].players.findIndex(p => p.name === pName);
+                if (pIdx === -1) {
+                  stats[key].players.push({ 
+                    id: safeId, 
+                    name: pName, 
+                    hits: Number(perf.h_hits) || 0, 
+                    hr: Number(perf.h_hr) || 0, 
+                    team: player.team_name || '不明'
+                  });
+                } else {
+                  stats[key].players[pIdx].hits += (Number(perf.h_hits) || 0);
+                  stats[key].players[pIdx].hr += (Number(perf.h_hr) || 0);
+                }
+              });
+            });
+          }
         }
+        
         setRanking(Object.values(stats).sort((a, b) => b.total_hits - a.total_hits));
       } catch (err) {
         console.error(err);
@@ -182,7 +238,6 @@ function RankingList() {
                 </summary>
 
                 <div className="px-5 md:px-16 pb-6 pt-4 bg-slate-50 border-t border-slate-100">
-                  {/* 【修正】タイトルとリンクを横並びに配置 */}
                   <div className="flex items-center justify-between mb-4">
                     <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase">主な活躍選手</p>
                     <Link href={detailUrl} className="text-[10px] font-black text-blue-500 hover:text-blue-700 flex items-center gap-1 bg-blue-100/50 px-3 py-1.5 rounded-full transition-all hover:scale-105 active:scale-95 shadow-sm">
@@ -192,7 +247,8 @@ function RankingList() {
                   </div>
 
                   <div className="flex flex-wrap gap-2">
-                    {item.players.sort((a,b)=>b.hits - a.hits).map(p => (
+                    {/* 通算の場合はヒット数が0の選手（投手など）は除外して表示をスッキリさせる */}
+                    {item.players.filter(p => p.hits > 0).sort((a,b)=>b.hits - a.hits).map(p => (
                       <Link key={p.name} href={`/player/${p.id}`} className="bg-white border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm text-xs flex items-center gap-2 hover:border-blue-500 hover:bg-blue-50 transition-all group/item">
                         <span className="text-[9px] bg-slate-100 px-1 rounded text-slate-500 font-bold">{p.team}</span>
                         <span className="font-bold text-slate-700 group-hover/item:text-blue-600 underline decoration-blue-200 decoration-2 underline-offset-4">{p.name}</span>
