@@ -1,19 +1,20 @@
+import os
+import re
 import requests
 from bs4 import BeautifulSoup
 from supabase import create_client, Client
 import unicodedata
-from dotenv import load_dotenv # ★追加: dotenvライブラリを読み込む
+from dotenv import load_dotenv
 
-# ★追加: .env.local ファイルから環境変数を読み込む
+# ★ .env.local ファイルから環境変数を読み込む
 load_dotenv('.env.local')
 
 # --- 設定 ---
-# .env.local の変数名が NEXT_PUBLIC_... の場合でも対応できるように OR で繋ぐ
 SUPABASE_URL = os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    print("❌ エラー: SupabaseのURLまたはキーが設定されていません。")
+    print("❌ エラー: SupabaseのURLまたはキーが設定されていません。(.env.localファイルを確認してください)")
     exit(1)
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -155,7 +156,7 @@ def calculate_metrics(batters, pitchers):
         except: ip_f = 0.0
         
         if ip_f > 0:
-            # FIPとWARの計算（被本塁打、与四球などが正しく入ったので計算可能になる）
+            # FIPとWARの計算
             fip = ((13*p.get("本塁打", 0) + 3*(p.get("四球", 0)+p.get("死球", 0)) - 2*p.get("三振", 0)) / ip_f) + 3.12
             p["FIP"] = round(fip, 2)
             p["投手WAR"] = round(((4.0 - fip) * ip_f / 9) / 10, 2)
