@@ -18,6 +18,22 @@ const POSITION_ADJUSTMENT: Record<string, number> = {
   '右翼手': -2.5, '左翼手': -2.5, '外野手': -0.8, '内野手': 0, '一塁手': -12.5, '指名打者': -17.5,
 };
 
+// --- パークファクター定数 (2021〜2025年の過去5年平均) ---
+const PARK_FACTORS: Record<string, number> = {
+  '東京ヤクルト': 1.18, 'ヤクルト': 1.18,
+  '北海道日本ハム': 1.15, '日本ハム': 1.15,
+  '横浜DeNA': 1.13, 'DeNA': 1.13,
+  '千葉ロッテ': 1.05, 'ロッテ': 1.05,
+  '広島東洋': 1.04, '広島': 1.04,
+  '福岡ソフトバンク': 1.01, 'ソフトバンク': 1.01,
+  '埼玉西武': 0.97, '西武': 0.97,
+  '読売': 0.95, '巨人': 0.95,
+  'オリックス': 0.95,
+  '東北楽天': 0.91, '楽天': 0.91,
+  '阪神': 0.86,
+  '中日': 0.84
+};
+
 // --- 指標ランク判定 ---
 const getRank = (value: number, type: 'FIP' | 'wRC+' | 'WAR') => {
   if (type === 'FIP') {
@@ -67,6 +83,7 @@ export default function PlayerDetail() {
   const calcSaber = (row: any, type: 'P' | 'B') => {
     const yearData = lgStats[row.年度];
     if (!yearData) return { fip: '-', war: '0.0', woba: 0, wrcPlus: 0, iso: 0, wrcPlusVal: 0, warVal: 0, ops: 0 };
+    
     if (type === 'P') {
       const ip = formatIP(row.投球回);
       if (ip === 0) return { fip: '-', war: '0.0', fipVal: 0, warVal: 0 };
@@ -76,10 +93,25 @@ export default function PlayerDetail() {
     } else {
       const pa = toF(row.打席);
       if (pa === 0) return { woba: 0, wrcPlus: 0, war: '0.0', iso: 0, wrcPlusVal: 0, warVal: 0, ops: 0 };
+      
       const wobaVal = (0.7 * toF(row.四球) + 0.72 * toF(row.死球) + 0.9 * (toF(row.安打)-(toF(row.二塁打)+toF(row.三塁打)+toF(row.本塁打))) + 1.25 * toF(row.二塁打) + 1.6 * toF(row.三塁打) + 2.0 * toF(row.本塁打)) / pa;
-      const wrcPlusVal = Math.round((( (wobaVal - yearData.lgwOBA) / 1.24 + yearData.lgR_PA) / yearData.lgR_PA) * 100);
-      const warVal = (((wobaVal - yearData.lgwOBA) / 1.24) * pa + (POSITION_ADJUSTMENT[player?.position_detail] || 0) * (pa / 600) + (17.5 * pa / 600)) / 10;
+      
+      // パークファクターの適用
+      let teamName = row.所属球団 || player?.team_name || '';
+      teamName = teamName.replace('タイガース', '').replace('ジャイアンツ', '').replace('ベイスターズ', '').replace('ドラゴンズ', '').replace('スワローズ', '').replace('カープ', '').replace('ゴールデンイーグルス', '').replace('マリーンズ', '').replace('ファイターズ', '').replace('ライオンズ', '').replace('バファローズ', '').replace('ホークス', '');
+      
+      const basePF = PARK_FACTORS[teamName] || 1.00;
+      const adjPF = (basePF + 1.0) / 2.0;
+
+      // wRC+ と WAR をパークファクターで補正
+      const wrcPlusVal = Math.round(((((wobaVal - yearData.lgwOBA) / 1.24 + yearData.lgR_PA) + (yearData.lgR_PA - (adjPF * yearData.lgR_PA))) / yearData.lgR_PA) * 100);
+      
+      const battingRuns = ((wobaVal - yearData.lgwOBA) / 1.24) * pa;
+      const parkCorrectedRuns = battingRuns + (yearData.lgR_PA - (adjPF * yearData.lgR_PA)) * pa;
+      const warVal = (parkCorrectedRuns + (POSITION_ADJUSTMENT[player?.position_detail] || 0) * (pa / 600) + (17.5 * pa / 600)) / 10;
+      
       const opsVal = row.OPS ? toF(row.OPS) : (toF(row.出塁率) + toF(row.長打率));
+      
       return { woba: wobaVal, wrcPlus: wrcPlusVal, war: warVal.toFixed(1), iso: toF(row.長打率)-toF(row.打率), wrcPlusVal, warVal, ops: opsVal };
     }
   };
@@ -88,7 +120,6 @@ export default function PlayerDetail() {
     async function fetchData() {
       try {
         setLoading(true);
-
         // ★鉄則：URLから取得したIDを確実に8桁の文字列化
         const safeId = String(id).padStart(8, '0');
 
@@ -98,7 +129,6 @@ export default function PlayerDetail() {
 
         const nameNoSpace = p.player_name.replace(/\s+/g, '').split('').join('%');
         
-        // ★修正: safeIdを使用
         const [allP, allB] = await Promise.all([
           supabase.from('pitching_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`),
           supabase.from('batting_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`)
@@ -129,7 +159,7 @@ export default function PlayerDetail() {
           setCareerHighs(highs);
         }
 
-        // ★鉄則：年度はDBの型に合わせて確実に数値（Number）として抽出
+        // ★鉄則：年度は確実に数値（Number）として抽出
         const yearsNum = merged.map(s => Number(s.年度));
         const [{ data: lgB }, { data: lgP }] = await Promise.all([
           supabase.from('batting_stats').select('*').in('年度', yearsNum),
