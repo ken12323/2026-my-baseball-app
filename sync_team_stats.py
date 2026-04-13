@@ -41,7 +41,7 @@ BATTER_DB_COLS = [
 PITCHER_DB_COLS = [
     "player_id", "名前", "年度", "所属球団", "背番号", "登板", "勝利", "敗戦", "セーブ", "ホールド", "HP",
     "完投", "完封", "無四球", "打者", "投球回", "安打", "本塁打", "四球", "死球", "三振",
-    "暴投", "ボーク", "失点", "自責点", "防御率", "投手WAR", "FIP", "ランク"
+    "暴投", "ボーク", "失点", "自責点", "防御率", "投手WAR", "FIP", "WHIP", "K/9", "BB/9", "K/BB", "K-BB%", "ランク"
 ]
 
 def safe_float(val):
@@ -105,7 +105,7 @@ def scrape_team(team_name, team_id, mode="battingstats"):
                 c_name = cols[i]
                 val = td.text.strip().replace('-', '0')
                 
-                # ★最大の修正ポイント: 投手特有の項目名を打者と同じ名前に強制変換
+                # ★修正ポイント: 投手特有の項目名を打者と同じ名前に強制変換
                 if c_name in ["被安打", "安打"]: c_name = "安打"
                 if c_name in ["被本塁打", "本塁打"]: c_name = "本塁打"
                 if c_name in ["与四球", "四球"]: c_name = "四球"
@@ -156,8 +156,24 @@ def calculate_metrics(batters, pitchers):
         except: ip_f = 0.0
         
         if ip_f > 0:
+            h = p.get("安打", 0)
+            hr = p.get("本塁打", 0)
+            bb = p.get("四球", 0)
+            hbp = p.get("死球", 0)
+            k = p.get("三振", 0)
+
+            # 投手のセイバーメトリクス計算 (NULL対策)
+            p["WHIP"] = round((bb + h) / ip_f, 2)
+            p["K/9"] = round((k * 9) / ip_f, 2)
+            p["BB/9"] = round((bb * 9) / ip_f, 2)
+            p["K/BB"] = round(k / bb, 2) if bb > 0 else float(k)
+
+            # 近似打者数によるK-BB%計算
+            approx_batters = (ip_f * 3) + h + bb + hbp
+            p["K-BB%"] = round(((k - bb) / approx_batters) * 100, 1) if approx_batters > 0 else 0.0
+
             # FIPとWARの計算
-            fip = ((13*p.get("本塁打", 0) + 3*(p.get("四球", 0)+p.get("死球", 0)) - 2*p.get("三振", 0)) / ip_f) + 3.12
+            fip = ((13*hr + 3*(bb+hbp) - 2*k) / ip_f) + 3.12
             p["FIP"] = round(fip, 2)
             p["投手WAR"] = round(((4.0 - fip) * ip_f / 9) / 10, 2)
             p["ランク"] = "S" if p["投手WAR"] > 3.0 else "A" if p["投手WAR"] > 1.0 else "B"
