@@ -28,7 +28,11 @@ export async function GET(request: Request) {
 
     const { data: players } = await supabase.from('players').select('*');
     const playerMap = new Map();
-    players?.forEach(p => playerMap.set((p.player_name || '').replace(/\s+/g, ''), p));
+    players?.forEach(p => {
+      // ★修正1: 名前の正規化（NFKC）を行い、空白を消去してマップ化
+      const cleanName = (p.player_name || '').normalize('NFKC').replace(/\s+/g, '');
+      playerMap.set(cleanName, p);
+    });
 
     const statsByDate: Record<string, any> = {};
 
@@ -44,22 +48,38 @@ export async function GET(request: Request) {
         if (!isP && !isB) return;
 
         $game(table).find('tr.bb-statsTable__row').each((___, row) => {
-          const name = $game(row).find('a[href*="/player/"]').text().trim().replace(/\s+/g, '');
+          // ★修正1: スポナビ側の名前も正規化して空白を消去
+          const rawName = $game(row).find('a[href*="/player/"]').text().trim();
+          const name = rawName.normalize('NFKC').replace(/\s+/g, '');
+          
           const pInfo = playerMap.get(name);
-          if (!pInfo) return;
+          if (!pInfo) return; // 紐付かない場合はスキップ
 
-          const pid = pInfo.player_id;
+          // ★修正2: 確実に8桁の文字列IDにする
+          const safePid = String(pInfo.player_id).padStart(8, '0');
+          
           if (!statsByDate[targetDate]) statsByDate[targetDate] = {};
-          if (!statsByDate[targetDate][pid]) {
-            statsByDate[targetDate][pid] = { player_id: pid, player_name: name, date: targetDate, h_hits: 0, h_hr: 0, h_rbi: 0, 名前: name, 年度: targetYear };
+          if (!statsByDate[targetDate][safePid]) {
+            statsByDate[targetDate][safePid] = { 
+              player_id: safePid, 
+              player_name: name, 
+              date: targetDate, 
+              h_hits: 0, 
+              h_hr: 0, 
+              h_rbi: 0, 
+              名前: name, 
+              年度: targetYear 
+            };
           }
-          const s = statsByDate[targetDate][pid];
+          
+          const s = statsByDate[targetDate][safePid];
           const tds = $game(row).find('td');
           const num = (n: string) => parseInt($game(tds[ths.indexOf(n)]).text().trim()) || 0;
 
           if (isB) {
             s.h_hits += num('安打');
             s.h_hr += num('本塁打');
+            s.h_rbi += num('打点'); // （おまけ）打点も集計項目にあるようなので追加
           }
         });
       });
@@ -67,11 +87,13 @@ export async function GET(request: Request) {
 
     for (const d of Object.keys(statsByDate)) {
       const data = Object.values(statsByDate[d]);
-      await supabase.from('daily_performance').delete().eq('date', d);
-      await supabase.from('daily_performance').insert(data);
+      if (data.length > 0) {
+        await supabase.from('daily_performance').delete().eq('date', d);
+        await supabase.from('daily_performance').insert(data);
+      }
     }
 
-    return NextResponse.json({ success: true, logs: [`${targetDate} の日次データを更新しました`] });
+    return NextResponse.json({ success: true, logs: [`${targetDate} の日次データを更新しました (選手数: ${statsByDate[targetDate] ? Object.keys(statsByDate[targetDate]).length : 0})`] });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
