@@ -1,13 +1,21 @@
-import os
-import re
 import requests
 from bs4 import BeautifulSoup
 from supabase import create_client, Client
 import unicodedata
+from dotenv import load_dotenv # ★追加: dotenvライブラリを読み込む
+
+# ★追加: .env.local ファイルから環境変数を読み込む
+load_dotenv('.env.local')
 
 # --- 設定 ---
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+# .env.local の変数名が NEXT_PUBLIC_... の場合でも対応できるように OR で繋ぐ
+SUPABASE_URL = os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("❌ エラー: SupabaseのURLまたはキーが設定されていません。")
+    exit(1)
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 TEAMS = {
