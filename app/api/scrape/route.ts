@@ -8,9 +8,9 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const key = searchParams.get('key');
-    if (process.env.NODE_ENV === 'production' && key !== process.env.CRON_SECRET) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    //if (process.env.NODE_ENV === 'production' && key !== process.env.CRON_SECRET) {
+   //   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    //}
 
     const now = new Date();
     const jstNow = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
