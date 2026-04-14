@@ -50,6 +50,24 @@ const SORT_OPTIONS: Record<string, string> = {
   era: '防御率', so: '三振', wins: '勝利', sv: 'セーブ', hp: 'HP', k_bb: 'K-BB%'
 };
 
+// ★追加：各指標の解説データ
+const METRIC_INFO: Record<string, { desc: string, calc: string, benchmark: string }> = {
+  hits: { desc: '打者がヒットを打った総数。', calc: '単打 + 二塁打 + 三塁打 + 本塁打', benchmark: 'レギュラーで100〜150安打。タイトル争いは160安打以上。' },
+  hr: { desc: '打者がホームランを打った総数。', calc: 'フェンスオーバー、またはランニング本塁打。', benchmark: '20本で強打者、30本以上でタイトル争いレベル。' },
+  rbi: { desc: '打者の打撃によってチームに入った得点。', calc: '安打、犠牲フライ等による得点の合計', benchmark: '80打点で優秀、100打点でリーグトップクラス。' },
+  sb: { desc: '次の塁を陥れた回数。足の速さと走塁技術の指標。', calc: '盗塁成功数', benchmark: '20個で俊足、30個以上で盗塁王争い。' },
+  avg: { desc: '打数が安打になる確率。確実性を示す伝統的な指標。', calc: '安打 ÷ 打数', benchmark: '.250が平均的、.280で好打者、.300（3割）で一流。' },
+  ops: { desc: '出塁率と長打率を足し合わせた、総合的な攻撃力を示す指標。', calc: '出塁率 + 長打率', benchmark: '.750で平均以上、.800で優秀、.900以上は球界を代表する強打者。' },
+  wrc_plus: { desc: '球場の広さや時代背景を補正し、打者が平均の何倍の得点を生み出したかを示す傑出度。', calc: 'リーグ平均を100としたパーセンテージ', benchmark: '100が平均、120で優秀、140以上はMVP級の活躍。' },
+  war: { desc: '打撃・走塁・守備・投球を総合評価し、控え選手に比べてチームに何勝分上乗せしたかを示す究極の指標。', calc: '各種指標の積み上げによる総合貢献度', benchmark: '2.0でレギュラー、4.0でオールスター級、6.0以上でMVP級。' },
+  era: { desc: '投手が9イニング（1試合）投げた場合に失う自責点の平均。', calc: '(自責点 × 9) ÷ 投球回', benchmark: '3.50で優秀な先発、2.00台でエース、1.00台は歴史的。' },
+  so: { desc: '投手が奪った三振の総数。圧倒的な投球能力を示す。', calc: '奪三振数', benchmark: '先発でシーズン100〜150個、200個でタイトル級。' },
+  wins: { desc: '投手に記録された勝利数。', calc: 'リードした状態で規定回を投げ終え、勝利した場合等', benchmark: '10勝で一人前の先発、15勝で最多勝争い。' },
+  sv: { desc: '僅差のリードを守り切って試合を終わらせた抑え投手の記録。', calc: 'セーブ条件を満たして登板し、リードを守り切る', benchmark: '20Sで優秀な守護神、30S以上でセーブ王争い。' },
+  hp: { desc: 'セーブが付かない場面でリードを守った中継ぎ投手の評価指標。', calc: 'ホールド数 + 救援勝利数', benchmark: '20HPで優秀なセットアッパー、30HP以上でタイトル争い。' },
+  k_bb: { desc: '奪三振率(K%)から与四球率(BB%)を引いたもの。味方の守備や運に左右されない投手の真の支配力。', calc: '(奪三振 ÷ 打者) - (与四球 ÷ 打者)', benchmark: '15%で優秀、20%以上は球界を代表する圧倒的なエース。' }
+};
+
 export default function RootsRankingPage() {
   const params = useParams();
   const type = params.type as string;
@@ -161,7 +179,6 @@ export default function RootsRankingPage() {
     return (b as any)[sortKey] - (a as any)[sortKey];
   });
 
-  // 規定による分割の判定
   const useSplit = ['avg', 'ops', 'wrc_plus', 'war', 'era', 'k_bb'].includes(sortKey);
   const qual = sorted.filter(p => p.is_qualified);
   const unqual = sorted.filter(p => !p.is_qualified);
@@ -211,7 +228,7 @@ export default function RootsRankingPage() {
     <main className="min-h-screen bg-slate-50 p-4 md:p-10 text-slate-900 font-sans tracking-tight">
       <div className="max-w-5xl mx-auto">
         <Link href="/" className="text-blue-600 font-black mb-8 inline-flex items-center gap-1 text-sm">← TOP</Link>
-        <header className="mb-12 text-center">
+        <header className="mb-8 text-center">
           <h1 className="text-5xl md:text-7xl font-black italic mb-6">{name} <span className="text-blue-600">Stats</span></h1>
           <div className="flex flex-wrap justify-center gap-2 pt-6 border-t">
             {Object.entries(SORT_OPTIONS).map(([key, label]) => (
@@ -219,6 +236,22 @@ export default function RootsRankingPage() {
             ))}
           </div>
         </header>
+
+        {/* ★追加：指標の解説パネル */}
+        <div className="mb-8 bg-blue-50 border border-blue-100 rounded-2xl p-5 shadow-sm">
+          <h3 className="text-lg font-black text-blue-900 mb-2">{SORT_OPTIONS[sortKey]} とは？</h3>
+          <p className="text-sm text-slate-700 mb-3">{METRIC_INFO[sortKey].desc}</p>
+          <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-6 text-xs font-medium text-slate-600">
+            <div className="flex items-center gap-2">
+              <span className="bg-white border text-slate-400 px-2 py-0.5 rounded">計算</span>
+              <span>{METRIC_INFO[sortKey].calc}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="bg-white border text-slate-400 px-2 py-0.5 rounded">目安</span>
+              <span>{METRIC_INFO[sortKey].benchmark}</span>
+            </div>
+          </div>
+        </div>
 
         <div className="space-y-4">
           {loading ? (
