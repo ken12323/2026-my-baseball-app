@@ -29,8 +29,6 @@ const findValue = (obj: any, keys: string[]) => {
   return 0;
 };
 
-// ★今回の肝：マスター(Full)から成績(Short)へのマッピング辞書
-// 成績データの「阪　神」や「巨人」から消化試合数を引くために使用します
 const FULL_TO_SHORT: Record<string, string[]> = {
   '阪神タイガース': ['阪神', '阪　神'],
   '読売ジャイアンツ': ['巨人', '読　売'],
@@ -66,7 +64,6 @@ export default function RootsRankingPage() {
       try {
         setLoading(true);
 
-        // 1. 各球団の「現在の最大試合数」を取得
         const { data: maxGamesData } = await supabase.from('batting_stats').select('*').eq('年度', selectedYear);
         const teamGames: Record<string, number> = {};
         let globalMax = 0;
@@ -76,11 +73,9 @@ export default function RootsRankingPage() {
           const t = row['所属球団'] || '';
           const g = parseInt(row['試合']) || 0;
           if (g > globalMax) globalMax = g;
-          // 成績テーブルの短縮名（例：「阪　神」）で試合数を保持
           if (!teamGames[t] || g > teamGames[t]) teamGames[t] = g;
         });
 
-        // 2. 指定された条件の選手一覧を取得
         let query = supabase.from('players').select('*');
         if (type === 'high_school') query = query.eq('high_school', name);
         else if (type === 'university') query = query.eq('university', name);
@@ -93,7 +88,6 @@ export default function RootsRankingPage() {
 
         const uniqueSearchIds = Array.from(new Set(playerList.map(p => String(p.player_id).padStart(8, '0'))));
 
-        // 3. 成績データを一括取得
         const [bRes, pRes] = await Promise.all([
           supabase.from('batting_stats').select('*').in('player_id', uniqueSearchIds).eq('年度', selectedYear),
           supabase.from('pitching_stats').select('*').in('player_id', uniqueSearchIds).eq('年度', selectedYear)
@@ -105,8 +99,6 @@ export default function RootsRankingPage() {
           const bStat = bRes.data?.find(s => String(s.player_id).padStart(8, '0') === safeId);
           const pStat = pRes.data?.find(s => String(s.player_id).padStart(8, '0') === safeId);
 
-          // ★規定打席の判定ロジック
-          // マスターの「阪神タイガース」から、成績データの「阪　神」または「阪神」の試合数を探す
           const shortNames = FULL_TO_SHORT[p.team_name] || [p.team_name];
           let teamGameCount = 0;
           for (const sn of shortNames) {
@@ -115,7 +107,6 @@ export default function RootsRankingPage() {
               break;
             }
           }
-          // 万が一紐付かない場合はリーグ最大値を使用
           if (teamGameCount === 0) teamGameCount = globalMax;
 
           const requiredPA = Math.floor(teamGameCount * 3.1);
@@ -124,6 +115,10 @@ export default function RootsRankingPage() {
           const isQualified = isP 
             ? toF(pStat?.投球回) >= requiredIP 
             : toF(bStat?.打席) >= requiredPA;
+
+          // ★修正：防御率「0.00」がJSの仕様でfalse判定され「99.99」になるバグを修正
+          const rawEra = parseFloat(pStat?.防御率);
+          const finalEra = isP ? (isNaN(rawEra) ? 99.99 : rawEra) : 99.99;
 
           return {
             player_id: safeId,
@@ -140,7 +135,7 @@ export default function RootsRankingPage() {
             ops: toF(bStat?.OPS),
             war: isP ? findValue(pStat, ['投手WAR', 'war', 'WAR']) : findValue(bStat, ['野手WAR', 'war', 'WAR']),
             so: isP ? findValue(pStat, ['三振', '奪三振']) : findValue(bStat, ['三振']),
-            era: isP ? (toF(pStat?.防御率) || 99.99) : 99.99,
+            era: finalEra, // 修正した防御率を適用
             wins: isP ? toF(pStat?.勝利) : 0,
             ip: String(pStat?.投球回 || '0')
           };
@@ -166,7 +161,6 @@ export default function RootsRankingPage() {
     return (b as any)[sortKey] - (a as any)[sortKey];
   });
 
-  // ★規定による分割を行う指標かどうかの判定（率系とWAR）
   const useQualSplit = ['avg', 'ops', 'war', 'era'].includes(sortKey);
   const qualifiedPlayers = sortedPlayers.filter(p => p.is_qualified);
   const unqualifiedPlayers = sortedPlayers.filter(p => !p.is_qualified);
@@ -251,9 +245,7 @@ export default function RootsRankingPage() {
           ) : sortedPlayers.length > 0 ? (
             useQualSplit ? (
               <>
-                {/* 規定到達者 */}
                 {qualifiedPlayers.map((p, index) => renderPlayerCard(p, index, true))}
-                {/* 規定未到達者 */}
                 {unqualifiedPlayers.length > 0 && (
                   <>
                     <div className="pt-10 pb-4 flex items-center gap-4">
@@ -269,7 +261,6 @@ export default function RootsRankingPage() {
                 )}
               </>
             ) : (
-              /* 安打・本塁打などのボリューム指標は混合して表示 */
               sortedPlayers.map((p, index) => renderPlayerCard(p, index, false))
             )
           ) : (
