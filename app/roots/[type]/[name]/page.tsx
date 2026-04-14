@@ -12,8 +12,9 @@ type RankedPlayer = {
   position: string;
   is_pitcher: boolean;
   is_qualified: boolean; 
-  games: number; pa: number; hits: number; hr: number; avg: number; ops: number; war: number;
-  era: number; so: number; wins: number; ip: string;
+  games: number; pa: number; hits: number; hr: number; rbi: number; sb: number;
+  avg: number; ops: number; wrc_plus: number; war: number;
+  era: number; so: number; wins: number; sv: number; hp: number; k_bb: number; ip: string;
 };
 
 const toF = (val: any) => {
@@ -45,7 +46,8 @@ const FULL_TO_SHORT: Record<string, string[]> = {
 };
 
 const SORT_OPTIONS: Record<string, string> = {
-  hits: '安打', hr: '本塁打', avg: '打率', ops: 'OPS', war: 'WAR', era: '防御率', so: '三振', wins: '勝利'
+  hits: '安打', hr: '本塁打', rbi: '打点', sb: '盗塁', avg: '打率', ops: 'OPS', wrc_plus: 'wRC+', war: 'WAR', 
+  era: '防御率', so: '三振', wins: '勝利', sv: 'セーブ', hp: 'HP', k_bb: 'K-BB%'
 };
 
 export default function RootsRankingPage() {
@@ -86,39 +88,31 @@ export default function RootsRankingPage() {
         const { data: playerList } = await query;
         if (!playerList || playerList.length === 0) return;
 
-        const uniqueSearchIds = Array.from(new Set(playerList.map(p => String(p.player_id).padStart(8, '0'))));
+        const uniqueIds = Array.from(new Set(playerList.map(p => String(p.player_id).padStart(8, '0'))));
 
         const [bRes, pRes] = await Promise.all([
-          supabase.from('batting_stats').select('*').in('player_id', uniqueSearchIds).eq('年度', selectedYear),
-          supabase.from('pitching_stats').select('*').in('player_id', uniqueSearchIds).eq('年度', selectedYear)
+          supabase.from('batting_stats').select('*').in('player_id', uniqueIds).eq('年度', selectedYear),
+          supabase.from('pitching_stats').select('*').in('player_id', uniqueIds).eq('年度', selectedYear)
         ]);
 
         const combined = playerList.map(p => {
           const safeId = String(p.player_id).padStart(8, '0');
           const isP = p.position_detail?.includes('投手');
-          const bStat = bRes.data?.find(s => String(s.player_id).padStart(8, '0') === safeId);
-          const pStat = pRes.data?.find(s => String(s.player_id).padStart(8, '0') === safeId);
+          const b = (bRes.data?.find(s => String(s.player_id).padStart(8, '0') === safeId) || {}) as any;
+          const pt = (pRes.data?.find(s => String(s.player_id).padStart(8, '0') === safeId) || {}) as any;
 
           const shortNames = FULL_TO_SHORT[p.team_name] || [p.team_name];
           let teamGameCount = 0;
           for (const sn of shortNames) {
-            if (teamGames[sn]) {
-              teamGameCount = teamGames[sn];
-              break;
-            }
+            if (teamGames[sn]) { teamGameCount = teamGames[sn]; break; }
           }
           if (teamGameCount === 0) teamGameCount = globalMax;
 
-          const requiredPA = Math.floor(teamGameCount * 3.1);
-          const requiredIP = teamGameCount;
-
           const isQualified = isP 
-            ? toF(pStat?.投球回) >= requiredIP 
-            : toF(bStat?.打席) >= requiredPA;
+            ? toF(pt['投球回']) >= teamGameCount 
+            : toF(b['打席']) >= Math.floor(teamGameCount * 3.1);
 
-          // ★修正：防御率「0.00」がJSの仕様でfalse判定され「99.99」になるバグを修正
-          const rawEra = parseFloat(pStat?.防御率);
-          const finalEra = isP ? (isNaN(rawEra) ? 99.99 : rawEra) : 99.99;
+          const rawEra = parseFloat(pt['防御率']);
 
           return {
             player_id: safeId,
@@ -127,17 +121,23 @@ export default function RootsRankingPage() {
             position: p.position_detail,
             is_pitcher: isP,
             is_qualified: isQualified,
-            games: toF(bStat?.試合 || pStat?.登板),
-            pa: toF(bStat?.打席),
-            hits: toF(bStat?.安打),
-            hr: toF(bStat?.本塁打),
-            avg: toF(bStat?.打率),
-            ops: toF(bStat?.OPS),
-            war: isP ? findValue(pStat, ['投手WAR', 'war', 'WAR']) : findValue(bStat, ['野手WAR', 'war', 'WAR']),
-            so: isP ? findValue(pStat, ['三振', '奪三振']) : findValue(bStat, ['三振']),
-            era: finalEra, // 修正した防御率を適用
-            wins: isP ? toF(pStat?.勝利) : 0,
-            ip: String(pStat?.投球回 || '0')
+            games: toF(b['試合'] || pt['登板']),
+            pa: toF(b['打席']),
+            hits: toF(b['安打']),
+            hr: toF(b['本塁打']),
+            rbi: toF(b['打点']),
+            sb: toF(b['盗塁']),
+            avg: toF(b['打率']),
+            ops: toF(b['OPS']),
+            wrc_plus: toF(b['wRC+']),
+            war: isP ? findValue(pt, ['投手WAR', 'war', 'WAR']) : findValue(b, ['野手WAR', 'war', 'WAR']),
+            era: isP ? (isNaN(rawEra) ? 99.99 : rawEra) : 99.99,
+            so: toF(pt['三振'] || pt['奪三振']),
+            wins: toF(pt['勝利']),
+            sv: toF(pt['セーブ']),
+            hp: toF(pt['ホールドポイント'] || pt['HP']),
+            k_bb: toF(pt['K-BB%']),
+            ip: String(pt['投球回'] || '0')
           };
         });
         setPlayers(combined);
@@ -146,63 +146,48 @@ export default function RootsRankingPage() {
     fetchRanking();
   }, [type, name, selectedYear]);
 
-  const filteredPlayers = players.filter(p => {
-    const hasAnyRecord = p.games > 0 || p.pa > 0 || (p.ip !== '0' && p.ip !== '');
-    const isPitchKey = ['era', 'wins', 'so'].includes(sortKey);
-    const isBatKey = ['hits', 'hr', 'avg', 'ops'].includes(sortKey);
-    if (isPitchKey) return p.is_pitcher && hasAnyRecord;
-    if (isBatKey) return !p.is_pitcher && hasAnyRecord; 
-    return hasAnyRecord;
+  const filtered = players.filter(p => {
+    const hasRecord = p.games > 0 || p.pa > 0 || (p.ip !== '0' && p.ip !== '');
+    const isPitchKey = ['era', 'so', 'wins', 'sv', 'hp', 'k_bb'].includes(sortKey);
+    const isBatKey = ['hits', 'hr', 'rbi', 'sb', 'avg', 'ops', 'wrc_plus'].includes(sortKey);
+    if (isPitchKey) return p.is_pitcher && hasRecord;
+    if (isBatKey) return !p.is_pitcher && hasRecord;
+    return hasRecord;
   });
 
-  const sortedPlayers = [...filteredPlayers].sort((a, b) => {
-    if (sortKey === 'era') return a.era - b.era; 
-    if ((b as any)[sortKey] === (a as any)[sortKey]) return b.war - a.war || b.pa - a.pa;
+  const sorted = [...filtered].sort((a, b) => {
+    if (sortKey === 'era') return a.era - b.era;
+    if ((b as any)[sortKey] === (a as any)[sortKey]) return b.war - a.war;
     return (b as any)[sortKey] - (a as any)[sortKey];
   });
 
-  const useQualSplit = ['avg', 'ops', 'war', 'era'].includes(sortKey);
-  const qualifiedPlayers = sortedPlayers.filter(p => p.is_qualified);
-  const unqualifiedPlayers = sortedPlayers.filter(p => !p.is_qualified);
+  // 規定による分割の判定
+  const useSplit = ['avg', 'ops', 'wrc_plus', 'war', 'era', 'k_bb'].includes(sortKey);
+  const qual = sorted.filter(p => p.is_qualified);
+  const unqual = sorted.filter(p => !p.is_qualified);
 
-  const renderPlayerCard = (p: RankedPlayer, index: number, applyQualStyle: boolean) => {
-    const isDimmed = applyQualStyle && !p.is_qualified;
+  const renderCard = (p: RankedPlayer, index: number, applyStyle: boolean) => {
+    const isDim = applyStyle && !p.is_qualified;
     return (
-      <Link href={`/player/${p.player_id}`} key={p.player_id} className={`block bg-white rounded-[2rem] p-6 shadow-sm hover:shadow-xl border group transition-all ${isDimmed ? 'opacity-80 hover:opacity-100 bg-slate-50/50' : ''}`}>
+      <Link href={`/player/${p.player_id}`} key={p.player_id} className={`block bg-white rounded-[2rem] p-6 shadow-sm hover:shadow-xl border group transition-all ${isDim ? 'opacity-80 hover:opacity-100 bg-slate-50/50' : ''}`}>
         <div className="flex items-center gap-4 md:gap-8">
-          <div className={`text-4xl md:text-5xl font-black italic w-12 text-center ${index === 0 && (!applyQualStyle || p.is_qualified) ? 'text-yellow-400' : 'text-slate-200'}`}>
-            {index + 1}
-          </div>
+          <div className={`text-4xl md:text-5xl font-black italic w-12 text-center ${index === 0 && (!applyStyle || p.is_qualified) ? 'text-yellow-400' : 'text-slate-200'}`}>{index + 1}</div>
           <div className="flex-1 min-w-0">
             <p className="text-[10px] font-black text-blue-500 uppercase mb-1">{p.team_name}</p>
             <div className="flex items-baseline gap-2 mb-3 flex-wrap">
-              <h2 className="text-2xl md:text-3xl font-black text-slate-900 group-hover:text-blue-600 transition-colors leading-none">{p.player_name}</h2>
+              <h2 className="text-2xl md:text-3xl font-black text-slate-900 group-hover:text-blue-600 leading-none">{p.player_name}</h2>
               <span className="text-[10px] font-bold text-slate-400 uppercase">{p.position}</span>
-              {isDimmed && (
-                <span className="text-[9px] font-black bg-red-50 text-red-500 px-1.5 py-0.5 rounded border border-red-100 leading-none">
-                  規定未満
-                </span>
-              )}
+              {isDim && <span className="text-[9px] font-black bg-red-50 text-red-500 px-1.5 py-0.5 rounded border border-red-100">規定未満</span>}
             </div>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-black text-slate-400 uppercase tracking-tighter border-t pt-2">
               <div className="flex gap-2">
-                {p.is_pitcher ? (
-                  <><span>{p.games}登板</span> <span>{p.ip}回</span></>
-                ) : (
-                  <><span>{p.games}試合</span> <span>{p.pa}打席</span> <span>{p.hits}安打</span> <span>{p.hr}HR</span></>
-                )}
+                {p.is_pitcher ? <span>{p.games}登板 {p.ip}回</span> : <span>{p.games}試合 {p.pa}打席 {p.hits}安打 {p.hr}HR {p.rbi}打点 {p.sb}盗塁</span>}
               </div>
-              <div className="flex gap-2 border-l pl-3">
+              <div className="flex gap-2 border-l pl-3 text-slate-900 font-bold">
                 {p.is_pitcher ? (
-                  <>
-                    <span className="text-slate-900 font-bold">防 {p.era > 90 ? '-.--' : p.era.toFixed(2)}</span>
-                    <span className="text-slate-900 font-bold">{p.so}奪三振</span>
-                  </>
+                  <>防 {p.era > 90 ? '-.--' : p.era.toFixed(2)} | {p.so}三振 | {p.wins}勝 | {p.sv}S | {p.hp}HP | K-BB {p.k_bb.toFixed(1)}%</>
                 ) : (
-                  <>
-                    <span className="text-slate-900 font-bold">打率 .{String(p.avg.toFixed(3)).split('.')[1]}</span>
-                    <span className="text-slate-900 font-bold">OPS {p.ops.toFixed(3)}</span>
-                  </>
+                  <>打率 .{String(p.avg.toFixed(3)).split('.')[1]} | OPS {p.ops.toFixed(3)} | wRC+ {Math.round(p.wrc_plus)}</>
                 )}
                 <span className="text-blue-600 bg-blue-50 px-2 py-0.5 rounded italic font-black">WAR {p.war >= 0 ? `+${p.war.toFixed(1)}` : p.war.toFixed(1)}</span>
               </div>
@@ -211,14 +196,10 @@ export default function RootsRankingPage() {
           <div className="text-right border-l pl-6 min-w-[110px]">
             <p className="text-[9px] font-black text-slate-300 uppercase mb-1">{SORT_OPTIONS[sortKey]}</p>
             <div className="text-3xl md:text-4xl font-black italic text-slate-900 leading-none">
-              {sortKey === 'hits' && p.hits}
-              {sortKey === 'hr' && p.hr}
-              {sortKey === 'avg' && `.${String(p.avg.toFixed(3)).split('.')[1]}`}
-              {sortKey === 'ops' && p.ops.toFixed(3)}
-              {sortKey === 'war' && (p.war >= 0 ? `+${p.war.toFixed(1)}` : p.war.toFixed(1))}
-              {sortKey === 'era' && (p.era > 90 ? '-.--' : p.era.toFixed(2))}
-              {sortKey === 'so' && Math.round(p.so)}
-              {sortKey === 'wins' && p.wins}
+              {sortKey === 'avg' ? `.${String(p.avg.toFixed(3)).split('.')[1]}` : 
+               sortKey === 'era' ? (p.era > 90 ? '-.--' : p.era.toFixed(2)) : 
+               sortKey === 'k_bb' ? `${p.k_bb.toFixed(1)}%` : 
+               Math.round((p as any)[sortKey] * 100) / 100}
             </div>
           </div>
         </div>
@@ -228,7 +209,7 @@ export default function RootsRankingPage() {
 
   return (
     <main className="min-h-screen bg-slate-50 p-4 md:p-10 text-slate-900 font-sans tracking-tight">
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-5xl mx-auto">
         <Link href="/" className="text-blue-600 font-black mb-8 inline-flex items-center gap-1 text-sm">← TOP</Link>
         <header className="mb-12 text-center">
           <h1 className="text-5xl md:text-7xl font-black italic mb-6">{name} <span className="text-blue-600">Stats</span></h1>
@@ -242,26 +223,19 @@ export default function RootsRankingPage() {
         <div className="space-y-4">
           {loading ? (
             <div className="p-20 text-center font-black animate-pulse text-blue-600 text-2xl italic tracking-tighter uppercase">Fetching...</div>
-          ) : sortedPlayers.length > 0 ? (
-            useQualSplit ? (
+          ) : sorted.length > 0 ? (
+            useSplit ? (
               <>
-                {qualifiedPlayers.map((p, index) => renderPlayerCard(p, index, true))}
-                {unqualifiedPlayers.length > 0 && (
+                {qual.map((p, i) => renderCard(p, i, true))}
+                {unqual.length > 0 && (
                   <>
-                    <div className="pt-10 pb-4 flex items-center gap-4">
-                      <div className="h-[2px] bg-slate-200 flex-1"></div>
-                      <h3 className="text-slate-400 font-black text-sm tracking-widest uppercase flex items-center gap-2">
-                        <span className="bg-slate-200 text-slate-500 px-2 py-1 rounded text-[10px]">参考記録</span>
-                        {['era'].includes(sortKey) ? '規定投球回 未満' : '規定打席 未満'}
-                      </h3>
-                      <div className="h-[2px] bg-slate-200 flex-1"></div>
-                    </div>
-                    {unqualifiedPlayers.map((p, index) => renderPlayerCard(p, qualifiedPlayers.length + index, true))}
+                    <div className="pt-10 pb-4 flex items-center gap-4"><div className="h-[2px] bg-slate-200 flex-1"></div><h3 className="text-slate-400 font-black text-sm tracking-widest uppercase">参考記録（規定未満）</h3><div className="h-[2px] bg-slate-200 flex-1"></div></div>
+                    {unqual.map((p, i) => renderCard(p, qual.length + i, true))}
                   </>
                 )}
               </>
             ) : (
-              sortedPlayers.map((p, index) => renderPlayerCard(p, index, false))
+              sorted.map((p, i) => renderCard(p, i, false))
             )
           ) : (
             <div className="p-20 text-center text-slate-300 font-black italic uppercase">No Stats Recorded</div>
