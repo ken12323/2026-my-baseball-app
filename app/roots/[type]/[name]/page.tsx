@@ -11,6 +11,7 @@ type RankedPlayer = {
   team_name: string; 
   position: string;
   is_pitcher: boolean;
+  is_qualified: boolean; // ★追加：規定到達フラグ
   games: number; pa: number; hits: number; hr: number; avg: number; ops: number; war: number;
   era: number; so: number; wins: number; ip: string;
 };
@@ -47,6 +48,20 @@ export default function RootsRankingPage() {
     async function fetchRanking() {
       try {
         setLoading(true);
+
+        // ★追加：各球団の「現在の消化試合数（最大の試合数）」を動的に取得する
+        // 修正：日本語カラムによるTSのParserErrorを防ぐため '*' に変更し、anyでキャスト
+        const { data: maxGamesData } = await supabase.from('batting_stats').select('*').eq('年度', selectedYear);
+        const teamGames: Record<string, number> = {};
+        maxGamesData?.forEach(r => {
+          const row = r as any; // 型エラー回避
+          const t = row.所属球団;
+          const g = parseInt(row.試合) || 0;
+          if (!teamGames[t] || g > teamGames[t]) {
+            teamGames[t] = g;
+          }
+        });
+
         let query = supabase.from('players').select('*');
         if (type === 'high_school') query = query.eq('high_school', name);
         else if (type === 'university') query = query.eq('university', name);
@@ -73,13 +88,20 @@ export default function RootsRankingPage() {
         const pitching = pRes.data || [];
 
         const combined = playerList.map(p => {
-          // ★鉄則：IDを確実に8桁の文字列にする
           const safeMasterId = String(p.player_id).trim().padStart(8, '0');
           const isP = p.position_detail?.includes('投手');
           
-          // ★修正：parseIntを排除し、文字列同士で比較
           const bStat = batting.find(s => String(s.player_id).trim().padStart(8, '0') === safeMasterId);
           const pStat = pitching.find(s => String(s.player_id).trim().padStart(8, '0') === safeMasterId);
+
+          // ★追加：チームの消化試合数から規定を算出し、判定する
+          const teamGameCount = teamGames[p.team_name] || 0;
+          const requiredPA = Math.floor(teamGameCount * 3.1); // 打者は試合数×3.1
+          const requiredIP = teamGameCount; // 投手は試合数×1.0
+
+          const isQualified = isP 
+            ? toF(pStat?.投球回) >= requiredIP 
+            : toF(bStat?.打席) >= requiredPA;
 
           return {
             player_id: safeMasterId,
@@ -87,6 +109,7 @@ export default function RootsRankingPage() {
             team_name: p.team_name,
             position: p.position_detail,
             is_pitcher: isP,
+            is_qualified: isQualified, // ★判定結果をセット
             games: toF(bStat?.試合 || pStat?.登板),
             pa: toF(bStat?.打席),
             hits: toF(bStat?.安打),
@@ -113,15 +136,80 @@ export default function RootsRankingPage() {
     const isBatKey = ['hits', 'hr', 'avg', 'ops'].includes(sortKey);
     
     if (isPitchKey) return p.is_pitcher && hasAnyRecord;
-    if (isBatKey) return hasAnyRecord;
+    // ★野手指標でソートしている時は、投手が混ざらないように除外
+    if (isBatKey) return !p.is_pitcher && hasAnyRecord; 
     return hasAnyRecord;
   });
 
   const sortedPlayers = [...filteredPlayers].sort((a, b) => {
-    if (sortKey === 'era') return a.era - b.era;
+    if (sortKey === 'era') return a.era - b.era; // 防御率は少ない方が上
     if ((b as any)[sortKey] === (a as any)[sortKey]) return b.war - a.war || b.pa - a.pa;
     return (b as any)[sortKey] - (a as any)[sortKey];
   });
+
+  // ★追加：規定到達と未到達で配列を分割
+  const qualifiedPlayers = sortedPlayers.filter(p => p.is_qualified);
+  const unqualifiedPlayers = sortedPlayers.filter(p => !p.is_qualified);
+
+  // ★追加：カード描画用の共通コンポーネント関数
+  const renderPlayerCard = (p: RankedPlayer, index: number) => (
+    <Link href={`/player/${p.player_id}`} key={p.player_id} className={`block bg-white rounded-[2rem] p-6 shadow-sm hover:shadow-xl border group transition-all ${!p.is_qualified ? 'opacity-80 hover:opacity-100 bg-slate-50/50' : ''}`}>
+      <div className="flex items-center gap-4 md:gap-8">
+        <div className={`text-4xl md:text-5xl font-black italic w-12 text-center ${index === 0 && p.is_qualified ? 'text-yellow-400' : 'text-slate-200'}`}>
+          {index + 1}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-[10px] font-black text-blue-500 uppercase mb-1">{p.team_name}</p>
+          <div className="flex items-baseline gap-2 mb-3 flex-wrap">
+            <h2 className="text-2xl md:text-3xl font-black text-slate-900 group-hover:text-blue-600 transition-colors leading-none">{p.player_name}</h2>
+            <span className="text-[10px] font-bold text-slate-400 uppercase">{p.position}</span>
+            {/* 規定未満の赤いバッジ */}
+            {!p.is_qualified && (
+              <span className="text-[9px] font-black bg-red-50 text-red-500 px-1.5 py-0.5 rounded border border-red-100 leading-none">
+                規定未満
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-black text-slate-400 uppercase tracking-tighter border-t pt-2">
+            <div className="flex gap-2">
+              {p.is_pitcher ? (
+                <><span>{p.games}登板</span> <span>{p.ip}回</span></>
+              ) : (
+                <><span>{p.games}試合</span> <span>{p.pa}打席</span> <span>{p.hits}安打</span> <span>{p.hr}HR</span></>
+              )}
+            </div>
+            <div className="flex gap-2 border-l pl-3">
+              {p.is_pitcher ? (
+                <>
+                  <span className="text-slate-900 font-bold">防 {p.era > 90 ? '-.--' : p.era.toFixed(2)}</span>
+                  <span className="text-slate-900 font-bold">{p.so}奪三振</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-slate-900 font-bold">打率 .{String(p.avg.toFixed(3)).split('.')[1]}</span>
+                  <span className="text-slate-900 font-bold">OPS {p.ops.toFixed(3)}</span>
+                </>
+              )}
+              <span className="text-blue-600 bg-blue-50 px-2 py-0.5 rounded italic font-black">WAR {p.war >= 0 ? `+${p.war.toFixed(1)}` : p.war.toFixed(1)}</span>
+            </div>
+          </div>
+        </div>
+        <div className="text-right border-l pl-6 min-w-[110px]">
+          <p className="text-[9px] font-black text-slate-300 uppercase mb-1">{SORT_OPTIONS[sortKey]}</p>
+          <div className="text-3xl md:text-4xl font-black italic text-slate-900 leading-none">
+            {sortKey === 'hits' && p.hits}
+            {sortKey === 'hr' && p.hr}
+            {sortKey === 'avg' && `.${String(p.avg.toFixed(3)).split('.')[1]}`}
+            {sortKey === 'ops' && p.ops.toFixed(3)}
+            {sortKey === 'war' && (p.war >= 0 ? `+${p.war.toFixed(1)}` : p.war.toFixed(1))}
+            {sortKey === 'era' && (p.era > 90 ? '-.--' : p.era.toFixed(2))}
+            {sortKey === 'so' && Math.round(p.so)}
+            {sortKey === 'wins' && p.wins}
+          </div>
+        </div>
+      </div>
+    </Link>
+  );
 
   return (
     <main className="min-h-screen bg-slate-50 p-4 md:p-10 text-slate-900 font-sans tracking-tight">
@@ -147,46 +235,30 @@ export default function RootsRankingPage() {
           {loading ? (
             <div className="p-20 text-center font-black animate-pulse text-blue-600 text-2xl italic tracking-tighter uppercase">Fetching...</div>
           ) : sortedPlayers.length > 0 ? (
-            sortedPlayers.map((p, index) => (
-              <Link href={`/player/${p.player_id}`} key={p.player_id} className="block bg-white rounded-[2rem] p-6 shadow-sm hover:shadow-xl border group transition-all">
-                <div className="flex items-center gap-4 md:gap-8">
-                  <div className={`text-4xl md:text-5xl font-black italic w-12 text-center ${index === 0 ? 'text-yellow-400' : 'text-slate-100'}`}>{index + 1}</div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[10px] font-black text-blue-500 uppercase mb-1">{p.team_name}</p>
-                    <div className="flex items-baseline gap-2 mb-3">
-                      <h2 className="text-2xl md:text-3xl font-black text-slate-900 group-hover:text-blue-600 transition-colors leading-none">{p.player_name}</h2>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase">{p.position}</span>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-black text-slate-400 uppercase tracking-tighter border-t pt-2">
-                      <div className="flex gap-2">
-                        <span>{p.games}試合</span> <span>{p.pa}打席</span> <span>{p.hits}安打</span> <span>{p.hr}HR</span>
-                      </div>
-                      <div className="flex gap-2 border-l pl-3">
-                        <span className="text-slate-900 font-bold">打率 .{String(p.avg.toFixed(3)).split('.')[1]}</span>
-                        <span className="text-slate-900 font-bold">OPS {p.ops.toFixed(3)}</span>
-                        <span className="text-blue-600 bg-blue-50 px-2 py-0.5 rounded italic font-black">WAR {p.war.toFixed(1)}</span>
-                      </div>
-                    </div>
+            <>
+              {/* 1. 規定到達プレイヤーの表示 */}
+              {qualifiedPlayers.map((p, index) => renderPlayerCard(p, index))}
+
+              {/* 2. 規定未到達プレイヤーの表示（セパレーターで区切る） */}
+              {unqualifiedPlayers.length > 0 && (
+                <>
+                  <div className="pt-10 pb-4 flex items-center gap-4">
+                    <div className="h-[2px] bg-slate-200 flex-1"></div>
+                    <h3 className="text-slate-400 font-black text-sm tracking-widest uppercase flex items-center gap-2">
+                      <span className="bg-slate-200 text-slate-500 px-2 py-1 rounded text-[10px]">参考記録</span>
+                      {['era', 'wins', 'so'].includes(sortKey) ? '規定投球回 未満' : '規定打席 未満'}
+                    </h3>
+                    <div className="h-[2px] bg-slate-200 flex-1"></div>
                   </div>
-                  <div className="text-right border-l pl-6 min-w-[110px]">
-                    <p className="text-[9px] font-black text-slate-300 uppercase mb-1">{SORT_OPTIONS[sortKey]}</p>
-                    <div className="text-3xl md:text-4xl font-black italic text-slate-900 leading-none">
-                      {sortKey === 'hits' && p.hits}
-                      {sortKey === 'hr' && p.hr}
-                      {sortKey === 'avg' && `.${String(p.avg.toFixed(3)).split('.')[1]}`}
-                      {sortKey === 'ops' && p.ops.toFixed(3)}
-                      {sortKey === 'war' && (p.war >= 0 ? `+${p.war.toFixed(1)}` : p.war.toFixed(1))}
-                      {sortKey === 'era' && (p.era > 90 ? '-.--' : p.era.toFixed(2))}
-                      {sortKey === 'so' && Math.round(p.so)}
-                      {sortKey === 'wins' && p.wins}
-                    </div>
-                  </div>
-                </div>
-              </Link>
-            ))
+                  
+                  {/* 順位番号は規定到達者からの続きの番号を振る */}
+                  {unqualifiedPlayers.map((p, index) => renderPlayerCard(p, qualifiedPlayers.length + index))}
+                </>
+              )}
+            </>
           ) : (
             <div className="p-20 text-center text-slate-300 font-black italic uppercase">
-              No Stats Recorded for 2026<br/>
+              No Stats Recorded for {selectedYear}<br/>
             </div>
           )}
         </div>
