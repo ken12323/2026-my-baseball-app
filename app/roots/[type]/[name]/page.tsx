@@ -29,6 +29,23 @@ const findValue = (obj: any, keys: string[]) => {
   return 0;
 };
 
+// ★今回の肝：マスター(Full)から成績(Short)へのマッピング辞書
+// 成績データの「阪　神」や「巨人」から消化試合数を引くために使用します
+const FULL_TO_SHORT: Record<string, string[]> = {
+  '阪神タイガース': ['阪神', '阪　神'],
+  '読売ジャイアンツ': ['巨人', '読　売'],
+  '東京ヤクルトスワローズ': ['ヤクルト', '東京ヤクルト'],
+  '横浜DeNAベイスターズ': ['DeNA', '横浜DeNA'],
+  '中日ドラゴンズ': ['中日', '中　日'],
+  '広島東洋カープ': ['広島', '広島東洋'],
+  '埼玉西武ライオンズ': ['西武', '埼玉西武'],
+  '千葉ロッテマリーンズ': ['ロッテ', '千葉ロッテ'],
+  '北海道日本ハムファイターズ': ['日本ハム', '北海道日本ハム'],
+  'オリックス・バファローズ': ['オリックス'],
+  '福岡ソフトバンクホークス': ['ソフトバンク', '福岡ソフトバンク'],
+  '東北楽天ゴールデンイーグルス': ['楽天', '東北楽天']
+};
+
 const SORT_OPTIONS: Record<string, string> = {
   hits: '安打', hr: '本塁打', avg: '打率', ops: 'OPS', war: 'WAR', era: '防御率', so: '三振', wins: '勝利'
 };
@@ -49,20 +66,21 @@ export default function RootsRankingPage() {
       try {
         setLoading(true);
 
+        // 1. 各球団の「現在の最大試合数」を取得
         const { data: maxGamesData } = await supabase.from('batting_stats').select('*').eq('年度', selectedYear);
         const teamGames: Record<string, number> = {};
-        let globalMaxGames = 0; // 保険：全体の最多試合数
-        
+        let globalMax = 0;
+
         maxGamesData?.forEach(r => {
-          const row = r as any; 
-          const t = row.所属球団 || '';
-          const g = parseInt(row.試合) || 0;
-          if (g > globalMaxGames) globalMaxGames = g;
-          if (!teamGames[t] || g > teamGames[t]) {
-            teamGames[t] = g;
-          }
+          const row = r as any;
+          const t = row['所属球団'] || '';
+          const g = parseInt(row['試合']) || 0;
+          if (g > globalMax) globalMax = g;
+          // 成績テーブルの短縮名（例：「阪　神」）で試合数を保持
+          if (!teamGames[t] || g > teamGames[t]) teamGames[t] = g;
         });
 
+        // 2. 指定された条件の選手一覧を取得
         let query = supabase.from('players').select('*');
         if (type === 'high_school') query = query.eq('high_school', name);
         else if (type === 'university') query = query.eq('university', name);
@@ -73,36 +91,32 @@ export default function RootsRankingPage() {
         const { data: playerList } = await query;
         if (!playerList || playerList.length === 0) return;
 
-        const searchIds = playerList.flatMap(p => {
-          const s = String(p.player_id).trim();
-          return [s, s.padStart(8, '0'), s.replace(/^0+/, '')];
-        });
-        const uniqueSearchIds = Array.from(new Set(searchIds));
+        const uniqueSearchIds = Array.from(new Set(playerList.map(p => String(p.player_id).padStart(8, '0'))));
 
+        // 3. 成績データを一括取得
         const [bRes, pRes] = await Promise.all([
           supabase.from('batting_stats').select('*').in('player_id', uniqueSearchIds).eq('年度', selectedYear),
           supabase.from('pitching_stats').select('*').in('player_id', uniqueSearchIds).eq('年度', selectedYear)
         ]);
 
-        const batting = bRes.data || [];
-        const pitching = pRes.data || [];
-
         const combined = playerList.map(p => {
-          const safeMasterId = String(p.player_id).trim().padStart(8, '0');
+          const safeId = String(p.player_id).padStart(8, '0');
           const isP = p.position_detail?.includes('投手');
-          
-          const bStat = batting.find(s => String(s.player_id).trim().padStart(8, '0') === safeMasterId);
-          const pStat = pitching.find(s => String(s.player_id).trim().padStart(8, '0') === safeMasterId);
+          const bStat = bRes.data?.find(s => String(s.player_id).padStart(8, '0') === safeId);
+          const pStat = pRes.data?.find(s => String(s.player_id).padStart(8, '0') === safeId);
 
-          // ★修正：球団名（「阪神タイガース」と「阪　神」等）の表記揺れを吸収して試合数を取得
-          let teamGameCount = globalMaxGames;
-          const pTeamClean = (p.team_name || '').replace(/\s+/g, '');
-          for (const [shortName, games] of Object.entries(teamGames)) {
-            if (pTeamClean.includes(shortName.replace(/\s+/g, ''))) {
-              teamGameCount = games;
+          // ★規定打席の判定ロジック
+          // マスターの「阪神タイガース」から、成績データの「阪　神」または「阪神」の試合数を探す
+          const shortNames = FULL_TO_SHORT[p.team_name] || [p.team_name];
+          let teamGameCount = 0;
+          for (const sn of shortNames) {
+            if (teamGames[sn]) {
+              teamGameCount = teamGames[sn];
               break;
             }
           }
+          // 万が一紐付かない場合はリーグ最大値を使用
+          if (teamGameCount === 0) teamGameCount = globalMax;
 
           const requiredPA = Math.floor(teamGameCount * 3.1);
           const requiredIP = teamGameCount;
@@ -112,12 +126,12 @@ export default function RootsRankingPage() {
             : toF(bStat?.打席) >= requiredPA;
 
           return {
-            player_id: safeMasterId,
+            player_id: safeId,
             player_name: p.player_name,
             team_name: p.team_name,
             position: p.position_detail,
             is_pitcher: isP,
-            is_qualified: isQualified, 
+            is_qualified: isQualified,
             games: toF(bStat?.試合 || pStat?.登板),
             pa: toF(bStat?.打席),
             hits: toF(bStat?.安打),
@@ -141,7 +155,6 @@ export default function RootsRankingPage() {
     const hasAnyRecord = p.games > 0 || p.pa > 0 || (p.ip !== '0' && p.ip !== '');
     const isPitchKey = ['era', 'wins', 'so'].includes(sortKey);
     const isBatKey = ['hits', 'hr', 'avg', 'ops'].includes(sortKey);
-    
     if (isPitchKey) return p.is_pitcher && hasAnyRecord;
     if (isBatKey) return !p.is_pitcher && hasAnyRecord; 
     return hasAnyRecord;
@@ -153,13 +166,11 @@ export default function RootsRankingPage() {
     return (b as any)[sortKey] - (a as any)[sortKey];
   });
 
-  // ★追加：規定到達が関係する指標の判定（ご要望通り、率系＋WAR）
-  const requiresQualification = ['avg', 'ops', 'war', 'era'].includes(sortKey);
-
+  // ★規定による分割を行う指標かどうかの判定（率系とWAR）
+  const useQualSplit = ['avg', 'ops', 'war', 'era'].includes(sortKey);
   const qualifiedPlayers = sortedPlayers.filter(p => p.is_qualified);
   const unqualifiedPlayers = sortedPlayers.filter(p => !p.is_qualified);
 
-  // カード描画コンポーネント
   const renderPlayerCard = (p: RankedPlayer, index: number, applyQualStyle: boolean) => {
     const isDimmed = applyQualStyle && !p.is_qualified;
     return (
@@ -227,13 +238,6 @@ export default function RootsRankingPage() {
         <Link href="/" className="text-blue-600 font-black mb-8 inline-flex items-center gap-1 text-sm">← TOP</Link>
         <header className="mb-12 text-center">
           <h1 className="text-5xl md:text-7xl font-black italic mb-6">{name} <span className="text-blue-600">Stats</span></h1>
-          <div className="flex justify-center mb-8">
-            <div className="inline-flex bg-slate-200 p-1 rounded-2xl">
-              {[2026, 2025, 2024].map(year => (
-                <button key={year} onClick={() => setSelectedYear(year)} className={`px-6 py-2 rounded-xl text-[11px] font-black transition-all ${selectedYear === year ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>{year} {year === 2026 ? '通算' : '確定'}</button>
-              ))}
-            </div>
-          </div>
           <div className="flex flex-wrap justify-center gap-2 pt-6 border-t">
             {Object.entries(SORT_OPTIONS).map(([key, label]) => (
               <button key={key} onClick={() => setSortKey(key)} className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all ${sortKey === key ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-slate-400 border hover:bg-slate-50'}`}>{label}</button>
@@ -245,12 +249,11 @@ export default function RootsRankingPage() {
           {loading ? (
             <div className="p-20 text-center font-black animate-pulse text-blue-600 text-2xl italic tracking-tighter uppercase">Fetching...</div>
           ) : sortedPlayers.length > 0 ? (
-            requiresQualification ? (
+            useQualSplit ? (
               <>
-                {/* 率系指標：規定到達プレイヤー */}
+                {/* 規定到達者 */}
                 {qualifiedPlayers.map((p, index) => renderPlayerCard(p, index, true))}
-
-                {/* 率系指標：規定未到達プレイヤー（参考記録） */}
+                {/* 規定未到達者 */}
                 {unqualifiedPlayers.length > 0 && (
                   <>
                     <div className="pt-10 pb-4 flex items-center gap-4">
@@ -266,13 +269,11 @@ export default function RootsRankingPage() {
                 )}
               </>
             ) : (
-              /* 積み上げ系指標（安打・本塁打など）：規定関係なく全員表示 */
+              /* 安打・本塁打などのボリューム指標は混合して表示 */
               sortedPlayers.map((p, index) => renderPlayerCard(p, index, false))
             )
           ) : (
-            <div className="p-20 text-center text-slate-300 font-black italic uppercase">
-              No Stats Recorded for {selectedYear}<br/>
-            </div>
+            <div className="p-20 text-center text-slate-300 font-black italic uppercase">No Stats Recorded</div>
           )}
         </div>
       </div>
