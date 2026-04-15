@@ -14,8 +14,8 @@ type RankedPlayer = {
   is_qualified: boolean; 
   team_games: number;
   draft_year: string; 
-  birth_date: string; // ★生年月日
-  age: number | null; // ★計算された年齢
+  birth_date: string; 
+  age: number | null; 
   games: number; pa: number; hits: number; hr: number; rbi: number; sb: number;
   avg: number; ops: number; wrc_plus: number; war: number;
   era: number; so: number; wins: number; sv: number; hp: number; k_bb: number; ip: string;
@@ -34,10 +34,9 @@ const findValue = (obj: any, keys: string[]) => {
   return 0;
 };
 
-// ★年齢を正確に計算する関数
+// 年齢を計算する関数（「YYYY-MM-DD」と「YYYY年MM月DD日」の両方に対応）
 const calculateAge = (birthDateStr: string | undefined | null) => {
   if (!birthDateStr) return null;
-  // '1999年3月13日', '1999-03-13', '1999/03/13' などを解析
   const match = String(birthDateStr).match(/(\d{4})[-年/.](\d{1,2})[-月/.](\d{1,2})/);
   if (!match) return null;
   const year = parseInt(match[1], 10);
@@ -47,7 +46,7 @@ const calculateAge = (birthDateStr: string | undefined | null) => {
   const today = new Date();
   let age = today.getFullYear() - year;
   if (today.getMonth() + 1 < month || (today.getMonth() + 1 === month && today.getDate() < day)) {
-    age--; // 今年の誕生日がまだ来ていなければ1引く
+    age--; 
   }
   return age;
 };
@@ -67,7 +66,6 @@ const FULL_TO_SHORT: Record<string, string[]> = {
   '東北楽天ゴールデンイーグルス': ['楽天', '東北楽天']
 };
 
-// ★選手一覧（roster）を一番右に移動
 const SORT_OPTIONS: Record<string, string> = {
   hits: '安打', hr: '本塁打', rbi: '打点', sb: '盗塁', avg: '打率', ops: 'OPS', wrc_plus: 'wRC+', war: 'WAR', 
   era: '防御率', so: '三振', wins: '勝利', sv: 'セーブ', hp: 'HP', k_bb: 'K-BB%', roster: '選手一覧'
@@ -155,8 +153,8 @@ export default function RootsRankingPage() {
 
           const rawEra = parseFloat(pt['防御率']);
           
-          // 生年月日を解析して年齢を算出
-          const birthDateStr = (p as any).birth_date || (p as any).生年月日 || ''; 
+          // ★修正：データベースのカラム名 `birthday` から日付を取得
+          const birthDateStr = (p as any).birthday || (p as any).birth_date || ''; 
           const age = calculateAge(birthDateStr);
 
           return {
@@ -207,11 +205,10 @@ export default function RootsRankingPage() {
   });
 
   const sorted = [...filtered].sort((a, b) => {
-    // ★選手一覧モードの場合は「年齢の若い順」でソート
     if (sortKey === 'roster') {
       const ageA = a.age ?? 999;
       const ageB = b.age ?? 999;
-      if (ageA !== ageB) return ageA - ageB; // 年齢が低い（若い）方が上に
+      if (ageA !== ageB) return ageA - ageB; 
       return a.player_name.localeCompare(b.player_name, 'ja');
     }
 
@@ -237,7 +234,6 @@ export default function RootsRankingPage() {
       <Link href={`/player/${p.player_id}`} key={p.player_id} className={`block bg-white rounded-[2rem] p-6 shadow-sm hover:shadow-xl border group transition-all flex flex-col justify-center ${isDim ? 'opacity-80 hover:opacity-100 bg-slate-50/50' : ''}`}>
         <div className="flex items-center gap-4 md:gap-8">
           
-          {/* ★ランキング数字は、選手一覧モード以外でのみ表示 */}
           {sortKey !== 'roster' && (
             <div className={`text-4xl md:text-5xl font-black italic w-12 text-center ${index === 0 && (!applyStyle || p.is_qualified) ? 'text-yellow-400' : 'text-slate-200'}`}>
               {index + 1}
@@ -253,7 +249,6 @@ export default function RootsRankingPage() {
             </div>
             
             <div className="flex flex-col gap-2 pt-2">
-              {/* ★選手一覧の時は生年月日と成績をシンプルに表示 */}
               {sortKey === 'roster' ? (
                 <>
                   <div className="text-[11px] font-bold text-slate-500">
@@ -282,17 +277,17 @@ export default function RootsRankingPage() {
           </div>
 
           <div className="text-right border-l pl-6 min-w-[110px] flex flex-col justify-center gap-3">
-            {/* ★選手一覧の時は右側に「年齢」と「ドラフト」を同サイズで並べる */}
             {sortKey === 'roster' ? (
               <>
+                {/* ★「AGE」を「年齢」に、「DRAFT」を「ドラフト指名年」に日本語化 */}
                 <div>
-                  <p className="text-[9px] font-black text-slate-300 uppercase mb-0.5">AGE</p>
+                  <p className="text-[10px] font-black text-slate-400 mb-0.5">年齢</p>
                   <div className="text-xl md:text-2xl font-black text-slate-900 leading-none">
                     {p.age !== null ? `${p.age}歳` : '-'}
                   </div>
                 </div>
                 <div>
-                  <p className="text-[9px] font-black text-slate-300 uppercase mb-0.5">DRAFT</p>
+                  <p className="text-[10px] font-black text-slate-400 mb-0.5">ドラフト指名年</p>
                   <div className="text-xl md:text-2xl font-black text-slate-900 leading-none">
                     {p.draft_year}
                   </div>
