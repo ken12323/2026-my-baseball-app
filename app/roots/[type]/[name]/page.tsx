@@ -13,7 +13,9 @@ type RankedPlayer = {
   is_pitcher: boolean;
   is_qualified: boolean; 
   team_games: number;
-  draft_year: string; // ★追加：名鑑表示用のドラフト情報
+  draft_year: string; 
+  birth_date: string; // ★生年月日
+  age: number | null; // ★計算された年齢
   games: number; pa: number; hits: number; hr: number; rbi: number; sb: number;
   avg: number; ops: number; wrc_plus: number; war: number;
   era: number; so: number; wins: number; sv: number; hp: number; k_bb: number; ip: string;
@@ -32,6 +34,24 @@ const findValue = (obj: any, keys: string[]) => {
   return 0;
 };
 
+// ★年齢を正確に計算する関数
+const calculateAge = (birthDateStr: string | undefined | null) => {
+  if (!birthDateStr) return null;
+  // '1999年3月13日', '1999-03-13', '1999/03/13' などを解析
+  const match = String(birthDateStr).match(/(\d{4})[-年/.](\d{1,2})[-月/.](\d{1,2})/);
+  if (!match) return null;
+  const year = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const day = parseInt(match[3], 10);
+  
+  const today = new Date();
+  let age = today.getFullYear() - year;
+  if (today.getMonth() + 1 < month || (today.getMonth() + 1 === month && today.getDate() < day)) {
+    age--; // 今年の誕生日がまだ来ていなければ1引く
+  }
+  return age;
+};
+
 const FULL_TO_SHORT: Record<string, string[]> = {
   '阪神タイガース': ['阪神', '阪　神'],
   '読売ジャイアンツ': ['巨人', '読　売'],
@@ -47,15 +67,13 @@ const FULL_TO_SHORT: Record<string, string[]> = {
   '東北楽天ゴールデンイーグルス': ['楽天', '東北楽天']
 };
 
-// ★追加：一番左に「選手一覧」を配置
+// ★選手一覧（roster）を一番右に移動
 const SORT_OPTIONS: Record<string, string> = {
-  roster: '選手一覧', hits: '安打', hr: '本塁打', rbi: '打点', sb: '盗塁', avg: '打率', ops: 'OPS', wrc_plus: 'wRC+', war: 'WAR', 
-  era: '防御率', so: '三振', wins: '勝利', sv: 'セーブ', hp: 'HP', k_bb: 'K-BB%'
+  hits: '安打', hr: '本塁打', rbi: '打点', sb: '盗塁', avg: '打率', ops: 'OPS', wrc_plus: 'wRC+', war: 'WAR', 
+  era: '防御率', so: '三振', wins: '勝利', sv: 'セーブ', hp: 'HP', k_bb: 'K-BB%', roster: '選手一覧'
 };
 
-// ★追加：選手一覧用の解説データ
 const METRIC_INFO: Record<string, { desc: string, calc: string, benchmark: string }> = {
-  roster: { desc: 'この条件（出身校など）に該当する、現在NPBに所属している現役選手の一覧です。', calc: '一軍出場の有無に関わらず全員を表示します。', benchmark: '所属球団順に並んでいます。' },
   hits: { desc: '打者がヒットを打った総数。', calc: '単打 + 二塁打 + 三塁打 + 本塁打', benchmark: 'レギュラーで100〜150安打。タイトル争いは160安打以上。' },
   hr: { desc: '打者がホームランを打った総数。', calc: 'フェンスオーバー、またはランニング本塁打。', benchmark: '20本で強打者、30本以上でタイトル争いレベル。' },
   rbi: { desc: '打者の打撃によってチームに入った得点。', calc: '安打、犠牲フライ等による得点の合計', benchmark: '80打点で優秀、100打点でリーグトップクラス。' },
@@ -69,7 +87,8 @@ const METRIC_INFO: Record<string, { desc: string, calc: string, benchmark: strin
   wins: { desc: '投手に記録された勝利数。', calc: 'リードした状態で規定回を投げ終え、勝利した場合等', benchmark: '10勝で一人前の先発、15勝で最多勝争い。' },
   sv: { desc: '僅差のリードを守り切って試合を終わらせた抑え投手の記録。', calc: 'セーブ条件を満たして登板し、リードを守り切る', benchmark: '20Sで優秀な守護神、30S以上でセーブ王争い。' },
   hp: { desc: 'セーブが付かない場面でリードを守った中継ぎ投手の評価指標。', calc: 'ホールド数 + 救援勝利数', benchmark: '20HPで優秀なセットアッパー、30HP以上でタイトル争い。' },
-  k_bb: { desc: '奪三振率(K%)から与四球率(BB%)を引いたもの。味方の守備や運に左右されない投手の真の支配力。', calc: '(奪三振 ÷ 打者) - (与四球 ÷ 打者)', benchmark: '15%で優秀、20%以上は球界を代表する圧倒的なエース。' }
+  k_bb: { desc: '奪三振率(K%)から与四球率(BB%)を引いたもの。味方の守備や運に左右されない投手の真の支配力。', calc: '(奪三振 ÷ 打者) - (与四球 ÷ 打者)', benchmark: '15%で優秀、20%以上は球界を代表する圧倒的なエース。' },
+  roster: { desc: 'この条件（出身校など）に該当する、現在NPBに所属している現役選手の一覧です。', calc: '一軍出場の有無に関わらず全員を表示します。', benchmark: '同級生を比較しやすいよう「年齢の若い順」に並んでいます。' }
 };
 
 export default function RootsRankingPage() {
@@ -80,7 +99,7 @@ export default function RootsRankingPage() {
 
   const [players, setPlayers] = useState<RankedPlayer[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sortKey, setSortKey] = useState<string>('roster'); // 初期表示を「選手一覧」にする場合はここを'roster'に
+  const [sortKey, setSortKey] = useState<string>('war'); 
   const [selectedYear, setSelectedYear] = useState<number>(2026);
 
   useEffect(() => {
@@ -135,6 +154,10 @@ export default function RootsRankingPage() {
             : toF(b['打席']) >= Math.floor(teamGameCount * 3.1);
 
           const rawEra = parseFloat(pt['防御率']);
+          
+          // 生年月日を解析して年齢を算出
+          const birthDateStr = (p as any).birth_date || (p as any).生年月日 || ''; 
+          const age = calculateAge(birthDateStr);
 
           return {
             player_id: safeId,
@@ -144,7 +167,9 @@ export default function RootsRankingPage() {
             is_pitcher: isP,
             is_qualified: isQualified,
             team_games: teamGameCount,
-            draft_year: p.draft_year || '不明', // ドラフト情報をセット
+            draft_year: p.draft_year || '不明',
+            birth_date: birthDateStr,
+            age: age,
             games: toF(b['試合'] || pt['登板']),
             pa: toF(b['打席']),
             hits: toF(b['安打']),
@@ -171,7 +196,6 @@ export default function RootsRankingPage() {
   }, [type, name, selectedYear]);
 
   const filtered = players.filter(p => {
-    // ★選手一覧の場合は、成績がなくても全員表示する
     if (sortKey === 'roster') return true; 
 
     const hasRecord = p.games > 0 || p.pa > 0 || (p.ip !== '0' && p.ip !== '');
@@ -183,11 +207,12 @@ export default function RootsRankingPage() {
   });
 
   const sorted = [...filtered].sort((a, b) => {
-    // ★選手一覧の場合は、球団順 ＞ 名前順 で並べる
+    // ★選手一覧モードの場合は「年齢の若い順」でソート
     if (sortKey === 'roster') {
-      const teamA = a.team_name || '';
-      const teamB = b.team_name || '';
-      return teamA.localeCompare(teamB, 'ja') || a.player_name.localeCompare(b.player_name, 'ja');
+      const ageA = a.age ?? 999;
+      const ageB = b.age ?? 999;
+      if (ageA !== ageB) return ageA - ageB; // 年齢が低い（若い）方が上に
+      return a.player_name.localeCompare(b.player_name, 'ja');
     }
 
     if (sortKey === 'era') return a.era - b.era;
@@ -205,30 +230,41 @@ export default function RootsRankingPage() {
     const isDim = applyStyle && !p.is_qualified;
     const statValue = (p as any)[sortKey];
     
-    // ペース計算
     const paceValue = p.team_games > 0 ? (statValue / p.team_games) * 143 : 0;
     const showPace = isAccumulation && p.team_games > 0 && p.team_games < 143 && sortKey !== 'roster';
 
     return (
       <Link href={`/player/${p.player_id}`} key={p.player_id} className={`block bg-white rounded-[2rem] p-6 shadow-sm hover:shadow-xl border group transition-all flex flex-col justify-center ${isDim ? 'opacity-80 hover:opacity-100 bg-slate-50/50' : ''}`}>
         <div className="flex items-center gap-4 md:gap-8">
-          <div className={`text-4xl md:text-5xl font-black italic w-12 text-center ${index === 0 && (!applyStyle || p.is_qualified) ? 'text-yellow-400' : 'text-slate-200'}`}>{index + 1}</div>
+          
+          {/* ★ランキング数字は、選手一覧モード以外でのみ表示 */}
+          {sortKey !== 'roster' && (
+            <div className={`text-4xl md:text-5xl font-black italic w-12 text-center ${index === 0 && (!applyStyle || p.is_qualified) ? 'text-yellow-400' : 'text-slate-200'}`}>
+              {index + 1}
+            </div>
+          )}
+
           <div className="flex-1 min-w-0">
             <p className="text-[10px] font-black text-blue-500 uppercase mb-1">{p.team_name}</p>
-            <div className="flex items-baseline gap-2 mb-3 flex-wrap">
+            <div className="flex items-baseline gap-2 mb-1 flex-wrap">
               <h2 className="text-2xl md:text-3xl font-black text-slate-900 group-hover:text-blue-600 leading-none">{p.player_name}</h2>
               <span className="text-[10px] font-bold text-slate-400 uppercase">{p.position}</span>
-              {isDim && <span className="text-[9px] font-black bg-red-50 text-red-500 px-1.5 py-0.5 rounded border border-red-100">規定未満</span>}
+              {isDim && sortKey !== 'roster' && <span className="text-[9px] font-black bg-red-50 text-red-500 px-1.5 py-0.5 rounded border border-red-100">規定未満</span>}
             </div>
             
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-black text-slate-400 uppercase tracking-tighter border-t pt-2">
-              {/* ★選手一覧時のカード下部表示をスッキリさせる */}
+            <div className="flex flex-col gap-2 pt-2">
+              {/* ★選手一覧の時は生年月日と成績をシンプルに表示 */}
               {sortKey === 'roster' ? (
-                <div className="flex gap-2 text-slate-500 font-bold">
-                  2026年 一軍成績: {p.games > 0 ? (p.is_pitcher ? `${p.games}登板 防${p.era !== 99.99 ? p.era.toFixed(2) : '-.--'}` : `${p.games}試合 ${p.hits}安打 ${p.hr}本塁打`) : '出場なし'}
-                </div>
-              ) : (
                 <>
+                  <div className="text-[11px] font-bold text-slate-500">
+                    生年月日: {p.birth_date || '不明'}
+                  </div>
+                  <div className="flex gap-2 text-slate-600 font-bold text-[11px]">
+                    2026年 一軍成績: {p.games > 0 ? (p.is_pitcher ? `${p.games}登板 防${p.era !== 99.99 ? p.era.toFixed(2) : '-.--'}` : `${p.games}試合 ${p.hits}安打 ${p.hr}本塁打`) : '出場なし'}
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-black text-slate-400 uppercase tracking-tighter border-t pt-2">
                   <div className="flex gap-2">
                     {p.is_pitcher ? <span>{p.games}登板 {p.ip}回</span> : <span>{p.games}試合 {p.pa}打席 {p.hits}安打 {p.hr}HR {p.rbi}打点 {p.sb}盗塁</span>}
                   </div>
@@ -240,32 +276,42 @@ export default function RootsRankingPage() {
                     )}
                     <span className="text-blue-600 bg-blue-50 px-2 py-0.5 rounded italic font-black">WAR {p.war > 0 ? `+${Math.round(p.war * 100) / 100}` : Math.round(p.war * 100) / 100}</span>
                   </div>
-                </>
+                </div>
               )}
             </div>
           </div>
 
-          <div className="text-right border-l pl-6 min-w-[110px] flex flex-col justify-center">
-            {/* ★選手一覧時の右側表示を「ドラフト年」に変更 */}
+          <div className="text-right border-l pl-6 min-w-[110px] flex flex-col justify-center gap-3">
+            {/* ★選手一覧の時は右側に「年齢」と「ドラフト」を同サイズで並べる */}
             {sortKey === 'roster' ? (
               <>
-                <p className="text-[9px] font-black text-slate-300 uppercase mb-1">DRAFT</p>
-                <div className="text-xl md:text-2xl font-black text-slate-900 leading-none">
-                  {p.draft_year}
+                <div>
+                  <p className="text-[9px] font-black text-slate-300 uppercase mb-0.5">AGE</p>
+                  <div className="text-xl md:text-2xl font-black text-slate-900 leading-none">
+                    {p.age !== null ? `${p.age}歳` : '-'}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-slate-300 uppercase mb-0.5">DRAFT</p>
+                  <div className="text-xl md:text-2xl font-black text-slate-900 leading-none">
+                    {p.draft_year}
+                  </div>
                 </div>
               </>
             ) : (
               <>
-                <p className="text-[9px] font-black text-slate-300 uppercase mb-1">{SORT_OPTIONS[sortKey]}</p>
-                <div className="text-3xl md:text-4xl font-black italic text-slate-900 leading-none">
-                  {sortKey === 'avg' ? `.${String(p.avg.toFixed(3)).split('.')[1]}` : 
-                   sortKey === 'era' ? (p.era > 90 ? '-.--' : p.era.toFixed(2)) : 
-                   sortKey === 'k_bb' ? `${p.k_bb.toFixed(1)}%` : 
-                   sortKey === 'war' ? (p.war > 0 ? `+${Math.round(p.war * 100) / 100}` : Math.round(p.war * 100) / 100) :
-                   Math.round(statValue * 100) / 100}
+                <div>
+                  <p className="text-[9px] font-black text-slate-300 uppercase mb-1">{SORT_OPTIONS[sortKey]}</p>
+                  <div className="text-3xl md:text-4xl font-black italic text-slate-900 leading-none">
+                    {sortKey === 'avg' ? `.${String(p.avg.toFixed(3)).split('.')[1]}` : 
+                     sortKey === 'era' ? (p.era > 90 ? '-.--' : p.era.toFixed(2)) : 
+                     sortKey === 'k_bb' ? `${p.k_bb.toFixed(1)}%` : 
+                     sortKey === 'war' ? (p.war > 0 ? `+${Math.round(p.war * 100) / 100}` : Math.round(p.war * 100) / 100) :
+                     Math.round(statValue * 100) / 100}
+                  </div>
                 </div>
                 {showPace && (
-                  <p className="text-sm md:text-base font-black text-slate-400 mt-2">
+                  <p className="text-sm md:text-base font-black text-slate-400 mt-1">
                     {sortKey === 'war' 
                       ? `(${paceValue > 0 ? '+' : ''}${paceValue.toFixed(1)} ペース)`
                       : `(${Math.round(paceValue)} ペース)`}
@@ -274,6 +320,7 @@ export default function RootsRankingPage() {
               </>
             )}
           </div>
+
         </div>
       </Link>
     );
@@ -311,7 +358,7 @@ export default function RootsRankingPage() {
           {loading ? (
             <div className="p-20 text-center font-black animate-pulse text-blue-600 text-2xl italic tracking-tighter uppercase">Fetching...</div>
           ) : sorted.length > 0 ? (
-            useSplit ? (
+            useSplit && sortKey !== 'roster' ? (
               <>
                 {qual.map((p, i) => renderCard(p, i, true))}
                 {unqual.length > 0 && (
@@ -325,7 +372,7 @@ export default function RootsRankingPage() {
               sorted.map((p, i) => renderCard(p, i, false))
             )
           ) : (
-            <div className="p-20 text-center text-slate-300 font-black italic uppercase">No Stats Recorded</div>
+            <div className="p-20 text-center text-slate-300 font-black italic uppercase">No Data Found</div>
           )}
         </div>
       </div>
