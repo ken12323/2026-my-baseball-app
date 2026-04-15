@@ -12,7 +12,7 @@ type RankedPlayer = {
   position: string;
   is_pitcher: boolean;
   is_qualified: boolean; 
-  team_games: number; // ★追加：ペース計算用にチーム消化試合数を保持
+  team_games: number; 
   games: number; pa: number; hits: number; hr: number; rbi: number; sb: number;
   avg: number; ops: number; wrc_plus: number; war: number;
   era: number; so: number; wins: number; sv: number; hp: number; k_bb: number; ip: string;
@@ -139,7 +139,7 @@ export default function RootsRankingPage() {
             position: p.position_detail,
             is_pitcher: isP,
             is_qualified: isQualified,
-            team_games: teamGameCount, // ペース計算用
+            team_games: teamGameCount,
             games: toF(b['試合'] || pt['登板']),
             pa: toF(b['打席']),
             hits: toF(b['安打']),
@@ -228,9 +228,9 @@ export default function RootsRankingPage() {
                sortKey === 'war' ? (p.war > 0 ? `+${Math.round(p.war * 100) / 100}` : Math.round(p.war * 100) / 100) :
                Math.round(statValue * 100) / 100}
             </div>
-            {/* ★ここがペース表示エリア */}
+            {/* ★修正ポイント：文字サイズを大きくし、太字に変更 */}
             {showPace && (
-              <p className="text-[10px] font-bold text-slate-400 mt-1.5 tracking-tighter">
+              <p className="text-sm md:text-base font-black text-slate-400 mt-2">
                 {sortKey === 'war' 
                   ? `(${paceValue > 0 ? '+' : ''}${paceValue.toFixed(1)} ペース)`
                   : `(${Math.round(paceValue)} ペース)`}
