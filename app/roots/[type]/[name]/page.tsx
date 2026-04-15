@@ -12,7 +12,8 @@ type RankedPlayer = {
   position: string;
   is_pitcher: boolean;
   is_qualified: boolean; 
-  team_games: number; 
+  team_games: number;
+  draft_year: string; // ★追加：名鑑表示用のドラフト情報
   games: number; pa: number; hits: number; hr: number; rbi: number; sb: number;
   avg: number; ops: number; wrc_plus: number; war: number;
   era: number; so: number; wins: number; sv: number; hp: number; k_bb: number; ip: string;
@@ -46,12 +47,15 @@ const FULL_TO_SHORT: Record<string, string[]> = {
   '東北楽天ゴールデンイーグルス': ['楽天', '東北楽天']
 };
 
+// ★追加：一番左に「選手一覧」を配置
 const SORT_OPTIONS: Record<string, string> = {
-  hits: '安打', hr: '本塁打', rbi: '打点', sb: '盗塁', avg: '打率', ops: 'OPS', wrc_plus: 'wRC+', war: 'WAR', 
+  roster: '選手一覧', hits: '安打', hr: '本塁打', rbi: '打点', sb: '盗塁', avg: '打率', ops: 'OPS', wrc_plus: 'wRC+', war: 'WAR', 
   era: '防御率', so: '三振', wins: '勝利', sv: 'セーブ', hp: 'HP', k_bb: 'K-BB%'
 };
 
+// ★追加：選手一覧用の解説データ
 const METRIC_INFO: Record<string, { desc: string, calc: string, benchmark: string }> = {
+  roster: { desc: 'この条件（出身校など）に該当する、現在NPBに所属している現役選手の一覧です。', calc: '一軍出場の有無に関わらず全員を表示します。', benchmark: '所属球団順に並んでいます。' },
   hits: { desc: '打者がヒットを打った総数。', calc: '単打 + 二塁打 + 三塁打 + 本塁打', benchmark: 'レギュラーで100〜150安打。タイトル争いは160安打以上。' },
   hr: { desc: '打者がホームランを打った総数。', calc: 'フェンスオーバー、またはランニング本塁打。', benchmark: '20本で強打者、30本以上でタイトル争いレベル。' },
   rbi: { desc: '打者の打撃によってチームに入った得点。', calc: '安打、犠牲フライ等による得点の合計', benchmark: '80打点で優秀、100打点でリーグトップクラス。' },
@@ -76,7 +80,7 @@ export default function RootsRankingPage() {
 
   const [players, setPlayers] = useState<RankedPlayer[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sortKey, setSortKey] = useState<string>('war'); 
+  const [sortKey, setSortKey] = useState<string>('roster'); // 初期表示を「選手一覧」にする場合はここを'roster'に
   const [selectedYear, setSelectedYear] = useState<number>(2026);
 
   useEffect(() => {
@@ -140,6 +144,7 @@ export default function RootsRankingPage() {
             is_pitcher: isP,
             is_qualified: isQualified,
             team_games: teamGameCount,
+            draft_year: p.draft_year || '不明', // ドラフト情報をセット
             games: toF(b['試合'] || pt['登板']),
             pa: toF(b['打席']),
             hits: toF(b['安打']),
@@ -166,6 +171,9 @@ export default function RootsRankingPage() {
   }, [type, name, selectedYear]);
 
   const filtered = players.filter(p => {
+    // ★選手一覧の場合は、成績がなくても全員表示する
+    if (sortKey === 'roster') return true; 
+
     const hasRecord = p.games > 0 || p.pa > 0 || (p.ip !== '0' && p.ip !== '');
     const isPitchKey = ['era', 'so', 'wins', 'sv', 'hp', 'k_bb'].includes(sortKey);
     const isBatKey = ['hits', 'hr', 'rbi', 'sb', 'avg', 'ops', 'wrc_plus'].includes(sortKey);
@@ -175,6 +183,13 @@ export default function RootsRankingPage() {
   });
 
   const sorted = [...filtered].sort((a, b) => {
+    // ★選手一覧の場合は、球団順 ＞ 名前順 で並べる
+    if (sortKey === 'roster') {
+      const teamA = a.team_name || '';
+      const teamB = b.team_name || '';
+      return teamA.localeCompare(teamB, 'ja') || a.player_name.localeCompare(b.player_name, 'ja');
+    }
+
     if (sortKey === 'era') return a.era - b.era;
     if ((b as any)[sortKey] === (a as any)[sortKey]) return b.war - a.war;
     return (b as any)[sortKey] - (a as any)[sortKey];
@@ -190,9 +205,9 @@ export default function RootsRankingPage() {
     const isDim = applyStyle && !p.is_qualified;
     const statValue = (p as any)[sortKey];
     
-    // ペース計算（143試合換算）
+    // ペース計算
     const paceValue = p.team_games > 0 ? (statValue / p.team_games) * 143 : 0;
-    const showPace = isAccumulation && p.team_games > 0 && p.team_games < 143;
+    const showPace = isAccumulation && p.team_games > 0 && p.team_games < 143 && sortKey !== 'roster';
 
     return (
       <Link href={`/player/${p.player_id}`} key={p.player_id} className={`block bg-white rounded-[2rem] p-6 shadow-sm hover:shadow-xl border group transition-all flex flex-col justify-center ${isDim ? 'opacity-80 hover:opacity-100 bg-slate-50/50' : ''}`}>
@@ -205,36 +220,58 @@ export default function RootsRankingPage() {
               <span className="text-[10px] font-bold text-slate-400 uppercase">{p.position}</span>
               {isDim && <span className="text-[9px] font-black bg-red-50 text-red-500 px-1.5 py-0.5 rounded border border-red-100">規定未満</span>}
             </div>
+            
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-black text-slate-400 uppercase tracking-tighter border-t pt-2">
-              <div className="flex gap-2">
-                {p.is_pitcher ? <span>{p.games}登板 {p.ip}回</span> : <span>{p.games}試合 {p.pa}打席 {p.hits}安打 {p.hr}HR {p.rbi}打点 {p.sb}盗塁</span>}
-              </div>
-              <div className="flex gap-2 border-l pl-3 text-slate-900 font-bold">
-                {p.is_pitcher ? (
-                  <>防 {p.era > 90 ? '-.--' : p.era.toFixed(2)} | {p.so}三振 | {p.wins}勝 | {p.sv}S | {p.hp}HP | K-BB {p.k_bb.toFixed(1)}%</>
-                ) : (
-                  <>打率 .{String(p.avg.toFixed(3)).split('.')[1]} | OPS {p.ops.toFixed(3)} | wRC+ {Math.round(p.wrc_plus)}</>
-                )}
-                <span className="text-blue-600 bg-blue-50 px-2 py-0.5 rounded italic font-black">WAR {p.war > 0 ? `+${Math.round(p.war * 100) / 100}` : Math.round(p.war * 100) / 100}</span>
-              </div>
+              {/* ★選手一覧時のカード下部表示をスッキリさせる */}
+              {sortKey === 'roster' ? (
+                <div className="flex gap-2 text-slate-500 font-bold">
+                  2026年 一軍成績: {p.games > 0 ? (p.is_pitcher ? `${p.games}登板 防${p.era !== 99.99 ? p.era.toFixed(2) : '-.--'}` : `${p.games}試合 ${p.hits}安打 ${p.hr}本塁打`) : '出場なし'}
+                </div>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    {p.is_pitcher ? <span>{p.games}登板 {p.ip}回</span> : <span>{p.games}試合 {p.pa}打席 {p.hits}安打 {p.hr}HR {p.rbi}打点 {p.sb}盗塁</span>}
+                  </div>
+                  <div className="flex gap-2 border-l pl-3 text-slate-900 font-bold">
+                    {p.is_pitcher ? (
+                      <>防 {p.era > 90 ? '-.--' : p.era.toFixed(2)} | {p.so}三振 | {p.wins}勝 | {p.sv}S | {p.hp}HP | K-BB {p.k_bb.toFixed(1)}%</>
+                    ) : (
+                      <>打率 .{String(p.avg.toFixed(3)).split('.')[1]} | OPS {p.ops.toFixed(3)} | wRC+ {Math.round(p.wrc_plus)}</>
+                    )}
+                    <span className="text-blue-600 bg-blue-50 px-2 py-0.5 rounded italic font-black">WAR {p.war > 0 ? `+${Math.round(p.war * 100) / 100}` : Math.round(p.war * 100) / 100}</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
+
           <div className="text-right border-l pl-6 min-w-[110px] flex flex-col justify-center">
-            <p className="text-[9px] font-black text-slate-300 uppercase mb-1">{SORT_OPTIONS[sortKey]}</p>
-            <div className="text-3xl md:text-4xl font-black italic text-slate-900 leading-none">
-              {sortKey === 'avg' ? `.${String(p.avg.toFixed(3)).split('.')[1]}` : 
-               sortKey === 'era' ? (p.era > 90 ? '-.--' : p.era.toFixed(2)) : 
-               sortKey === 'k_bb' ? `${p.k_bb.toFixed(1)}%` : 
-               sortKey === 'war' ? (p.war > 0 ? `+${Math.round(p.war * 100) / 100}` : Math.round(p.war * 100) / 100) :
-               Math.round(statValue * 100) / 100}
-            </div>
-            {/* ★修正ポイント：文字サイズを大きくし、太字に変更 */}
-            {showPace && (
-              <p className="text-sm md:text-base font-black text-slate-400 mt-2">
-                {sortKey === 'war' 
-                  ? `(${paceValue > 0 ? '+' : ''}${paceValue.toFixed(1)} ペース)`
-                  : `(${Math.round(paceValue)} ペース)`}
-              </p>
+            {/* ★選手一覧時の右側表示を「ドラフト年」に変更 */}
+            {sortKey === 'roster' ? (
+              <>
+                <p className="text-[9px] font-black text-slate-300 uppercase mb-1">DRAFT</p>
+                <div className="text-xl md:text-2xl font-black text-slate-900 leading-none">
+                  {p.draft_year}
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-[9px] font-black text-slate-300 uppercase mb-1">{SORT_OPTIONS[sortKey]}</p>
+                <div className="text-3xl md:text-4xl font-black italic text-slate-900 leading-none">
+                  {sortKey === 'avg' ? `.${String(p.avg.toFixed(3)).split('.')[1]}` : 
+                   sortKey === 'era' ? (p.era > 90 ? '-.--' : p.era.toFixed(2)) : 
+                   sortKey === 'k_bb' ? `${p.k_bb.toFixed(1)}%` : 
+                   sortKey === 'war' ? (p.war > 0 ? `+${Math.round(p.war * 100) / 100}` : Math.round(p.war * 100) / 100) :
+                   Math.round(statValue * 100) / 100}
+                </div>
+                {showPace && (
+                  <p className="text-sm md:text-base font-black text-slate-400 mt-2">
+                    {sortKey === 'war' 
+                      ? `(${paceValue > 0 ? '+' : ''}${paceValue.toFixed(1)} ペース)`
+                      : `(${Math.round(paceValue)} ペース)`}
+                  </p>
+                )}
+              </>
             )}
           </div>
         </div>
