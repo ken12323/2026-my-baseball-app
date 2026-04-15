@@ -12,6 +12,7 @@ type RankedPlayer = {
   position: string;
   is_pitcher: boolean;
   is_qualified: boolean; 
+  team_games: number; // ★追加：ペース計算用にチーム消化試合数を保持
   games: number; pa: number; hits: number; hr: number; rbi: number; sb: number;
   avg: number; ops: number; wrc_plus: number; war: number;
   era: number; so: number; wins: number; sv: number; hp: number; k_bb: number; ip: string;
@@ -50,7 +51,6 @@ const SORT_OPTIONS: Record<string, string> = {
   era: '防御率', so: '三振', wins: '勝利', sv: 'セーブ', hp: 'HP', k_bb: 'K-BB%'
 };
 
-// ★追加：各指標の解説データ
 const METRIC_INFO: Record<string, { desc: string, calc: string, benchmark: string }> = {
   hits: { desc: '打者がヒットを打った総数。', calc: '単打 + 二塁打 + 三塁打 + 本塁打', benchmark: 'レギュラーで100〜150安打。タイトル争いは160安打以上。' },
   hr: { desc: '打者がホームランを打った総数。', calc: 'フェンスオーバー、またはランニング本塁打。', benchmark: '20本で強打者、30本以上でタイトル争いレベル。' },
@@ -139,6 +139,7 @@ export default function RootsRankingPage() {
             position: p.position_detail,
             is_pitcher: isP,
             is_qualified: isQualified,
+            team_games: teamGameCount, // ペース計算用
             games: toF(b['試合'] || pt['登板']),
             pa: toF(b['打席']),
             hits: toF(b['安打']),
@@ -180,13 +181,21 @@ export default function RootsRankingPage() {
   });
 
   const useSplit = ['avg', 'ops', 'wrc_plus', 'war', 'era', 'k_bb'].includes(sortKey);
+  const isAccumulation = ['hits', 'hr', 'rbi', 'sb', 'so', 'wins', 'sv', 'hp', 'war'].includes(sortKey);
+  
   const qual = sorted.filter(p => p.is_qualified);
   const unqual = sorted.filter(p => !p.is_qualified);
 
   const renderCard = (p: RankedPlayer, index: number, applyStyle: boolean) => {
     const isDim = applyStyle && !p.is_qualified;
+    const statValue = (p as any)[sortKey];
+    
+    // ペース計算（143試合換算）
+    const paceValue = p.team_games > 0 ? (statValue / p.team_games) * 143 : 0;
+    const showPace = isAccumulation && p.team_games > 0 && p.team_games < 143;
+
     return (
-      <Link href={`/player/${p.player_id}`} key={p.player_id} className={`block bg-white rounded-[2rem] p-6 shadow-sm hover:shadow-xl border group transition-all ${isDim ? 'opacity-80 hover:opacity-100 bg-slate-50/50' : ''}`}>
+      <Link href={`/player/${p.player_id}`} key={p.player_id} className={`block bg-white rounded-[2rem] p-6 shadow-sm hover:shadow-xl border group transition-all flex flex-col justify-center ${isDim ? 'opacity-80 hover:opacity-100 bg-slate-50/50' : ''}`}>
         <div className="flex items-center gap-4 md:gap-8">
           <div className={`text-4xl md:text-5xl font-black italic w-12 text-center ${index === 0 && (!applyStyle || p.is_qualified) ? 'text-yellow-400' : 'text-slate-200'}`}>{index + 1}</div>
           <div className="flex-1 min-w-0">
@@ -206,18 +215,27 @@ export default function RootsRankingPage() {
                 ) : (
                   <>打率 .{String(p.avg.toFixed(3)).split('.')[1]} | OPS {p.ops.toFixed(3)} | wRC+ {Math.round(p.wrc_plus)}</>
                 )}
-                <span className="text-blue-600 bg-blue-50 px-2 py-0.5 rounded italic font-black">WAR {p.war >= 0 ? `+${p.war.toFixed(1)}` : p.war.toFixed(1)}</span>
+                <span className="text-blue-600 bg-blue-50 px-2 py-0.5 rounded italic font-black">WAR {p.war > 0 ? `+${Math.round(p.war * 100) / 100}` : Math.round(p.war * 100) / 100}</span>
               </div>
             </div>
           </div>
-          <div className="text-right border-l pl-6 min-w-[110px]">
+          <div className="text-right border-l pl-6 min-w-[110px] flex flex-col justify-center">
             <p className="text-[9px] font-black text-slate-300 uppercase mb-1">{SORT_OPTIONS[sortKey]}</p>
             <div className="text-3xl md:text-4xl font-black italic text-slate-900 leading-none">
               {sortKey === 'avg' ? `.${String(p.avg.toFixed(3)).split('.')[1]}` : 
                sortKey === 'era' ? (p.era > 90 ? '-.--' : p.era.toFixed(2)) : 
                sortKey === 'k_bb' ? `${p.k_bb.toFixed(1)}%` : 
-               Math.round((p as any)[sortKey] * 100) / 100}
+               sortKey === 'war' ? (p.war > 0 ? `+${Math.round(p.war * 100) / 100}` : Math.round(p.war * 100) / 100) :
+               Math.round(statValue * 100) / 100}
             </div>
+            {/* ★ここがペース表示エリア */}
+            {showPace && (
+              <p className="text-[10px] font-bold text-slate-400 mt-1.5 tracking-tighter">
+                {sortKey === 'war' 
+                  ? `(${paceValue > 0 ? '+' : ''}${paceValue.toFixed(1)} ペース)`
+                  : `(${Math.round(paceValue)} ペース)`}
+              </p>
+            )}
           </div>
         </div>
       </Link>
@@ -237,7 +255,6 @@ export default function RootsRankingPage() {
           </div>
         </header>
 
-        {/* ★追加：指標の解説パネル */}
         <div className="mb-8 bg-blue-50 border border-blue-100 rounded-2xl p-5 shadow-sm">
           <h3 className="text-lg font-black text-blue-900 mb-2">{SORT_OPTIONS[sortKey]} とは？</h3>
           <p className="text-sm text-slate-700 mb-3">{METRIC_INFO[sortKey].desc}</p>
