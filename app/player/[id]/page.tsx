@@ -55,6 +55,22 @@ const rankBadge = (rank: string) => {
   return `${base} bg-gray-500`;
 };
 
+// ★追加：学年（年度）を計算する関数 (4/2〜翌年4/1を同学年とする)
+const getGeneration = (birthDateStr: string | undefined | null) => {
+  if (!birthDateStr) return null;
+  const match = String(birthDateStr).match(/(\d{4})[-年/.](\d{1,2})[-月/.](\d{1,2})/);
+  if (!match) return null;
+  const year = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const day = parseInt(match[3], 10);
+
+  // 1〜3月、または4月1日生まれの場合は、前年の年度に属する
+  if (month < 4 || (month === 4 && day === 1)) {
+    return year - 1;
+  }
+  return year;
+};
+
 export default function PlayerDetail() {
   const { id } = useParams();
   const [player, setPlayer] = useState<any>(null);
@@ -214,18 +230,38 @@ export default function PlayerDetail() {
     return { 年度: r.年度, 本塁打: isThisYear ? predictedHR : toF(r.本塁打), OPS: toF(r.出塁率)+toF(r.長打率), isPrediction: isThisYear };
   });
 
-  // ★プロフィール表示用のデータ整形ロジック
-  const careerHistory = [
-    player.high_school, 
-    player.university, 
-    player.prev_team_1, 
-    player.prev_team_2, 
-    player.prev_team_3
-  ].filter(Boolean).join(' - ') || '経歴情報なし';
+  // ★プロフィール表示用のデータ整形ロジック（リンク化対応）
+  const birthDateStr = player.birthday || player.birth_date;
+  const generationYear = getGeneration(birthDateStr);
 
-  const draftInfo = player.draft_year && player.draft_rank
-    ? `${player.draft_year}年 ${player.is_developmental ? '育成' : 'ドラフト'}${player.draft_rank}位`
-    : 'ドラフト情報なし';
+  const renderCareerInfo = () => {
+    const items = [];
+    if (player.high_school) items.push(<Link key="hs" href={`/roots/high_school/${encodeURIComponent(player.high_school)}`} className="text-blue-600 hover:underline">{player.high_school}</Link>);
+    if (player.university) items.push(<Link key="uni" href={`/roots/university/${encodeURIComponent(player.university)}`} className="text-blue-600 hover:underline">{player.university}</Link>);
+    if (player.prev_team_1) items.push(<Link key="prev1" href={`/roots/previous_team/${encodeURIComponent(player.prev_team_1)}`} className="text-blue-600 hover:underline">{player.prev_team_1}</Link>);
+    if (player.prev_team_2) items.push(<Link key="prev2" href={`/roots/previous_team/${encodeURIComponent(player.prev_team_2)}`} className="text-blue-600 hover:underline">{player.prev_team_2}</Link>);
+    if (player.prev_team_3) items.push(<Link key="prev3" href={`/roots/previous_team/${encodeURIComponent(player.prev_team_3)}`} className="text-blue-600 hover:underline">{player.prev_team_3}</Link>);
+    
+    if (items.length === 0) return <span className="text-sm font-black text-slate-700">経歴情報なし</span>;
+  
+    return (
+      <span className="text-sm font-black text-slate-700 flex flex-wrap gap-x-1">
+        {items.map((item, i) => (
+          <span key={i} className="flex items-center">
+            {item}
+            {i < items.length - 1 && <span className="mx-1 text-slate-300">-</span>}
+          </span>
+        ))}
+      </span>
+    );
+  };
+
+  const draftInfoNode = player.draft_year && player.draft_rank ? (
+    <span className="text-sm font-black text-slate-700">
+      <Link href={`/roots/draft/${player.draft_year}`} className="text-blue-600 hover:underline">{player.draft_year}年</Link>
+      {' '}{player.is_developmental ? '育成' : 'ドラフト'}{player.draft_rank}位
+    </span>
+  ) : <span className="text-sm font-black text-slate-700">ドラフト情報なし</span>;
 
   const bodyInfo = player.height && player.weight 
     ? `${player.height}cm ／ ${player.weight}kg` 
@@ -287,31 +323,44 @@ export default function PlayerDetail() {
             {/* 左カラム */}
             <div className="space-y-4">
               <div className="flex items-baseline border-b border-slate-100 pb-2">
-                <span className="w-24 text-[11px] font-bold text-slate-400">身長／体重</span>
+                <span className="w-24 text-[11px] font-bold text-slate-400 shrink-0">身長／体重</span>
                 <span className="text-sm font-black text-slate-700">{bodyInfo}</span>
               </div>
               <div className="flex items-baseline border-b border-slate-100 pb-2">
-                <span className="w-24 text-[11px] font-bold text-slate-400">生年月日</span>
-                <span className="text-sm font-black text-slate-700">{player.birthday || '-'}</span>
+                <span className="w-24 text-[11px] font-bold text-slate-400 shrink-0">生年月日</span>
+                <span className="text-sm font-black text-slate-700 flex items-center flex-wrap gap-2">
+                  {birthDateStr || '-'}
+                  {generationYear && (
+                    <Link href={`/roots/generation/${generationYear}`} className="text-[10px] text-blue-600 hover:underline bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md">
+                      {generationYear}年度生まれ一覧
+                    </Link>
+                  )}
+                </span>
               </div>
               <div className="flex items-baseline border-b border-slate-100 pb-2">
-                <span className="w-24 text-[11px] font-bold text-slate-400">出身地</span>
-                <span className="text-sm font-black text-slate-700">{player.hometown || '-'}</span>
+                <span className="w-24 text-[11px] font-bold text-slate-400 shrink-0">出身地</span>
+                <span className="text-sm font-black text-slate-700">
+                  {player.hometown ? (
+                    <Link href={`/roots/hometown/${encodeURIComponent(player.hometown)}`} className="text-blue-600 hover:underline">
+                      {player.hometown}
+                    </Link>
+                  ) : '-'}
+                </span>
               </div>
             </div>
 
             {/* 右カラム */}
             <div className="space-y-4">
               <div className="flex items-baseline border-b border-slate-100 pb-2">
-                <span className="w-24 text-[11px] font-bold text-slate-400">ドラフト</span>
-                <span className="text-sm font-black text-slate-700">{draftInfo}</span>
+                <span className="w-24 text-[11px] font-bold text-slate-400 shrink-0">ドラフト</span>
+                {draftInfoNode}
               </div>
               <div className="flex items-baseline border-b border-slate-100 pb-2">
-                <span className="w-24 text-[11px] font-bold text-slate-400">推定年俸</span>
+                <span className="w-24 text-[11px] font-bold text-slate-400 shrink-0">推定年俸</span>
                 <span className="text-sm font-black text-slate-700">{player.salary_estimated || '-'}</span>
               </div>
               <div className="flex items-baseline border-b border-slate-100 pb-2">
-                <span className="w-24 text-[11px] font-bold text-slate-400">血液型</span>
+                <span className="w-24 text-[11px] font-bold text-slate-400 shrink-0">血液型</span>
                 <span className="text-sm font-black text-slate-700">{player.blood_type ? `${player.blood_type}型` : '-'}</span>
               </div>
             </div>
@@ -319,18 +368,9 @@ export default function PlayerDetail() {
             {/* 経歴（全幅を使う） */}
             <div className="md:col-span-2 flex items-baseline border-b border-slate-100 pb-2 mt-2">
               <span className="w-24 text-[11px] font-bold text-slate-400 shrink-0">経歴</span>
-              <span className="text-sm font-black text-slate-700">{careerHistory}</span>
+              {renderCareerInfo()}
             </div>
           </div>
-
-          {/* 寸評（スカウティングレポート）がある場合のみ表示 */}
-          {player.raw_scouting_report && (
-            <div className="mt-6 bg-slate-50 p-4 rounded-xl border border-slate-100">
-              <p className="text-xs font-bold text-slate-600 leading-relaxed">
-                {player.raw_scouting_report}
-              </p>
-            </div>
-          )}
         </div>
         {/* ▲ プロフィールブロック ▲ */}
 
