@@ -34,7 +34,7 @@ const findValue = (obj: any, keys: string[]) => {
   return 0;
 };
 
-// 年齢を計算する関数（「YYYY-MM-DD」と「YYYY年MM月DD日」の両方に対応）
+// 年齢を計算する関数
 const calculateAge = (birthDateStr: string | undefined | null) => {
   if (!birthDateStr) return null;
   const match = String(birthDateStr).match(/(\d{4})[-年/.](\d{1,2})[-月/.](\d{1,2})/);
@@ -153,7 +153,6 @@ export default function RootsRankingPage() {
 
           const rawEra = parseFloat(pt['防御率']);
           
-          // ★修正：データベースのカラム名 `birthday` から日付を取得
           const birthDateStr = (p as any).birthday || (p as any).birth_date || ''; 
           const age = calculateAge(birthDateStr);
 
@@ -250,14 +249,15 @@ export default function RootsRankingPage() {
             
             <div className="flex flex-col gap-2 pt-2">
               {sortKey === 'roster' ? (
-                <>
-                  <div className="text-[11px] font-bold text-slate-500">
+                // ★修正箇所：「生年月日」と「一軍成績」を横に並べて間に縦線を入れる
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+                  <div className="font-bold text-slate-500">
                     生年月日: {p.birth_date || '不明'}
                   </div>
-                  <div className="flex gap-2 text-slate-600 font-bold text-[11px]">
+                  <div className="font-bold text-slate-600 border-l border-slate-200 pl-3">
                     2026年 一軍成績: {p.games > 0 ? (p.is_pitcher ? `${p.games}登板 防${p.era !== 99.99 ? p.era.toFixed(2) : '-.--'}` : `${p.games}試合 ${p.hits}安打 ${p.hr}本塁打`) : '出場なし'}
                   </div>
-                </>
+                </div>
               ) : (
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-black text-slate-400 uppercase tracking-tighter border-t pt-2">
                   <div className="flex gap-2">
@@ -279,7 +279,6 @@ export default function RootsRankingPage() {
           <div className="text-right border-l pl-6 min-w-[110px] flex flex-col justify-center gap-3">
             {sortKey === 'roster' ? (
               <>
-                {/* ★「AGE」を「年齢」に、「DRAFT」を「ドラフト指名年」に日本語化 */}
                 <div>
                   <p className="text-[10px] font-black text-slate-400 mb-0.5">年齢</p>
                   <div className="text-xl md:text-2xl font-black text-slate-900 leading-none">
