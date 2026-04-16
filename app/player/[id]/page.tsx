@@ -214,6 +214,23 @@ export default function PlayerDetail() {
     return { 年度: r.年度, 本塁打: isThisYear ? predictedHR : toF(r.本塁打), OPS: toF(r.出塁率)+toF(r.長打率), isPrediction: isThisYear };
   });
 
+  // ★プロフィール表示用のデータ整形ロジック
+  const careerHistory = [
+    player.high_school, 
+    player.university, 
+    player.prev_team_1, 
+    player.prev_team_2, 
+    player.prev_team_3
+  ].filter(Boolean).join(' - ') || '経歴情報なし';
+
+  const draftInfo = player.draft_year && player.draft_rank
+    ? `${player.draft_year}年 ${player.is_developmental ? '育成' : 'ドラフト'}${player.draft_rank}位`
+    : 'ドラフト情報なし';
+
+  const bodyInfo = player.height && player.weight 
+    ? `${player.height}cm ／ ${player.weight}kg` 
+    : 'データなし';
+
   return (
     <main className="min-h-screen bg-gray-50 p-2 md:p-10 text-slate-900 font-sans tracking-tight" onClick={() => setActiveTooltip(null)}>
       <div className="max-w-2xl mx-auto">
@@ -258,6 +275,64 @@ export default function PlayerDetail() {
             </div>
           </div>
         </header>
+
+        {/* ▼ プロフィールブロック ▼ */}
+        <div className="bg-white rounded-[2rem] p-6 md:p-8 shadow-sm border border-slate-100 mb-8">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-1.5 h-5 bg-blue-600 rounded-full"></div>
+            <h3 className="text-lg font-black text-slate-800 tracking-wider uppercase">Profile</h3>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+            {/* 左カラム */}
+            <div className="space-y-4">
+              <div className="flex items-baseline border-b border-slate-100 pb-2">
+                <span className="w-24 text-[11px] font-bold text-slate-400">身長／体重</span>
+                <span className="text-sm font-black text-slate-700">{bodyInfo}</span>
+              </div>
+              <div className="flex items-baseline border-b border-slate-100 pb-2">
+                <span className="w-24 text-[11px] font-bold text-slate-400">生年月日</span>
+                <span className="text-sm font-black text-slate-700">{player.birthday || '-'}</span>
+              </div>
+              <div className="flex items-baseline border-b border-slate-100 pb-2">
+                <span className="w-24 text-[11px] font-bold text-slate-400">出身地</span>
+                <span className="text-sm font-black text-slate-700">{player.hometown || '-'}</span>
+              </div>
+            </div>
+
+            {/* 右カラム */}
+            <div className="space-y-4">
+              <div className="flex items-baseline border-b border-slate-100 pb-2">
+                <span className="w-24 text-[11px] font-bold text-slate-400">ドラフト</span>
+                <span className="text-sm font-black text-slate-700">{draftInfo}</span>
+              </div>
+              <div className="flex items-baseline border-b border-slate-100 pb-2">
+                <span className="w-24 text-[11px] font-bold text-slate-400">推定年俸</span>
+                <span className="text-sm font-black text-slate-700">{player.salary_estimated || '-'}</span>
+              </div>
+              <div className="flex items-baseline border-b border-slate-100 pb-2">
+                <span className="w-24 text-[11px] font-bold text-slate-400">血液型</span>
+                <span className="text-sm font-black text-slate-700">{player.blood_type ? `${player.blood_type}型` : '-'}</span>
+              </div>
+            </div>
+
+            {/* 経歴（全幅を使う） */}
+            <div className="md:col-span-2 flex items-baseline border-b border-slate-100 pb-2 mt-2">
+              <span className="w-24 text-[11px] font-bold text-slate-400 shrink-0">経歴</span>
+              <span className="text-sm font-black text-slate-700">{careerHistory}</span>
+            </div>
+          </div>
+
+          {/* 寸評（スカウティングレポート）がある場合のみ表示 */}
+          {player.raw_scouting_report && (
+            <div className="mt-6 bg-slate-50 p-4 rounded-xl border border-slate-100">
+              <p className="text-xs font-bold text-slate-600 leading-relaxed">
+                {player.raw_scouting_report}
+              </p>
+            </div>
+          )}
+        </div>
+        {/* ▲ プロフィールブロック ▲ */}
 
         <div className="bg-white rounded-[2rem] p-6 shadow-xl border-4 border-slate-100 mb-8 text-black">
           <h3 className="text-blue-600 font-black text-xs uppercase border-b-2 border-blue-100 pb-2 mb-4">本塁打・OPSトレンド</h3>
