@@ -55,7 +55,7 @@ const rankBadge = (rank: string) => {
   return `${base} bg-gray-500`;
 };
 
-// ★追加：学年（年度）を計算する関数 (4/2〜翌年4/1を同学年とする)
+// 学年（年度）を計算する関数 (4/2〜翌年4/1を同学年とする)
 const getGeneration = (birthDateStr: string | undefined | null) => {
   if (!birthDateStr) return null;
   const match = String(birthDateStr).match(/(\d{4})[-年/.](\d{1,2})[-月/.](\d{1,2})/);
@@ -64,7 +64,6 @@ const getGeneration = (birthDateStr: string | undefined | null) => {
   const month = parseInt(match[2], 10);
   const day = parseInt(match[3], 10);
 
-  // 1〜3月、または4月1日生まれの場合は、前年の年度に属する
   if (month < 4 || (month === 4 && day === 1)) {
     return year - 1;
   }
@@ -112,14 +111,12 @@ export default function PlayerDetail() {
       
       const wobaVal = (0.7 * toF(row.四球) + 0.72 * toF(row.死球) + 0.9 * (toF(row.安打)-(toF(row.二塁打)+toF(row.三塁打)+toF(row.本塁打))) + 1.25 * toF(row.二塁打) + 1.6 * toF(row.三塁打) + 2.0 * toF(row.本塁打)) / pa;
       
-      // パークファクターの適用
       let teamName = row.所属球団 || player?.team_name || '';
       teamName = teamName.replace('タイガース', '').replace('ジャイアンツ', '').replace('ベイスターズ', '').replace('ドラゴンズ', '').replace('スワローズ', '').replace('カープ', '').replace('ゴールデンイーグルス', '').replace('マリーンズ', '').replace('ファイターズ', '').replace('ライオンズ', '').replace('バファローズ', '').replace('ホークス', '');
       
       const basePF = PARK_FACTORS[teamName] || 1.00;
       const adjPF = (basePF + 1.0) / 2.0;
 
-      // wRC+ と WAR をパークファクターで補正
       const wrcPlusVal = Math.round(((((wobaVal - yearData.lgwOBA) / 1.24 + yearData.lgR_PA) + (yearData.lgR_PA - (adjPF * yearData.lgR_PA))) / yearData.lgR_PA) * 100);
       
       const battingRuns = ((wobaVal - yearData.lgwOBA) / 1.24) * pa;
@@ -136,7 +133,6 @@ export default function PlayerDetail() {
     async function fetchData() {
       try {
         setLoading(true);
-        // ★鉄則：URLから取得したIDを確実に8桁の文字列化
         const safeId = String(id).padStart(8, '0');
 
         const { data: p } = await supabase.from('players').select('*').eq('player_id', safeId).single();
@@ -175,7 +171,6 @@ export default function PlayerDetail() {
           setCareerHighs(highs);
         }
 
-        // ★鉄則：年度は確実に数値（Number）として抽出
         const yearsNum = merged.map(s => Number(s.年度));
         const [{ data: lgB }, { data: lgP }] = await Promise.all([
           supabase.from('batting_stats').select('*').in('年度', yearsNum),
@@ -224,13 +219,30 @@ export default function PlayerDetail() {
   const totalWar = player.position_detail === '投手' ? toF(pSaber.warVal) : toF(bSaber.warVal);
   const totalRank = player.position_detail === '投手' ? getRank(toF(pSaber.warVal), 'WAR') : getRank(toF(bSaber.warVal), 'WAR');
 
-  const predictedHR = toF(latest.試合) > 0 ? Math.round((toF(latest.本塁打) / toF(latest.試合)) * 143) : 0;
+  // ★グラフ用データの動的生成（投手と野手で分ける）
+  const isPitcher = player.position_detail === '投手';
+  const predictedHR = !isPitcher && toF(latest.試合) > 0 ? Math.round((toF(latest.本塁打) / toF(latest.試合)) * 143) : 0;
+  
   const chartData = [...mergedStats].reverse().map((r, i) => {
     const isThisYear = i === mergedStats.length - 1;
-    return { 年度: r.年度, 本塁打: isThisYear ? predictedHR : toF(r.本塁打), OPS: toF(r.出塁率)+toF(r.長打率), isPrediction: isThisYear };
+    if (isPitcher) {
+      const era = toF(r.防御率);
+      return { 
+        年度: r.年度, 
+        奪三振: toF(r.三振 || r.奪三振), 
+        防御率: era > 90 ? null : era, // 99.99などの異常値はグラフから除外
+        isPrediction: isThisYear 
+      };
+    } else {
+      return { 
+        年度: r.年度, 
+        本塁打: isThisYear ? predictedHR : toF(r.本塁打), 
+        OPS: toF(r.出塁率)+toF(r.長打率), 
+        isPrediction: isThisYear 
+      };
+    }
   });
 
-  // ★プロフィール表示用のデータ整形ロジック（リンク化対応）
   const birthDateStr = player.birthday || player.birth_date;
   const generationYear = getGeneration(birthDateStr);
 
@@ -312,7 +324,6 @@ export default function PlayerDetail() {
           </div>
         </header>
 
-        {/* ▼ プロフィールブロック ▼ */}
         <div className="bg-white rounded-[2rem] p-6 md:p-8 shadow-sm border border-slate-100 mb-8">
           <div className="flex items-center gap-3 mb-6">
             <div className="w-1.5 h-5 bg-blue-600 rounded-full"></div>
@@ -320,7 +331,6 @@ export default function PlayerDetail() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
-            {/* 左カラム */}
             <div className="space-y-4">
               <div className="flex items-baseline border-b border-slate-100 pb-2">
                 <span className="w-24 text-[11px] font-bold text-slate-400 shrink-0">身長／体重</span>
@@ -349,7 +359,6 @@ export default function PlayerDetail() {
               </div>
             </div>
 
-            {/* 右カラム */}
             <div className="space-y-4">
               <div className="flex items-baseline border-b border-slate-100 pb-2">
                 <span className="w-24 text-[11px] font-bold text-slate-400 shrink-0">ドラフト</span>
@@ -365,27 +374,39 @@ export default function PlayerDetail() {
               </div>
             </div>
 
-            {/* 経歴（全幅を使う） */}
             <div className="md:col-span-2 flex items-baseline border-b border-slate-100 pb-2 mt-2">
               <span className="w-24 text-[11px] font-bold text-slate-400 shrink-0">経歴</span>
               {renderCareerInfo()}
             </div>
           </div>
         </div>
-        {/* ▲ プロフィールブロック ▲ */}
 
         <div className="bg-white rounded-[2rem] p-6 shadow-xl border-4 border-slate-100 mb-8 text-black">
-          <h3 className="text-blue-600 font-black text-xs uppercase border-b-2 border-blue-100 pb-2 mb-4">本塁打・OPSトレンド</h3>
+          {/* ★グラフのタイトルも動的に変更 */}
+          <h3 className="text-blue-600 font-black text-xs uppercase border-b-2 border-blue-100 pb-2 mb-4">
+            {isPitcher ? '奪三振・防御率トレンド' : '本塁打・OPSトレンド'}
+          </h3>
           <div className="h-48 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                 <XAxis dataKey="年度" fontSize={10} axisLine={false} tickLine={false} />
                 <YAxis yAxisId="left" fontSize={10} axisLine={false} tickLine={false} />
-                <YAxis yAxisId="right" orientation="right" fontSize={10} axisLine={false} tickLine={false} />
+                {/* ★防御率(ERA)のために右のY軸を反転(reversed={isPitcher}) */}
+                <YAxis yAxisId="right" orientation="right" fontSize={10} axisLine={false} tickLine={false} reversed={isPitcher} />
                 <ChartTooltip />
-                <Line yAxisId="left" type="monotone" dataKey="本塁打" stroke="#ef4444" strokeWidth={4} dot={{ r: 4 }} />
-                <Line yAxisId="right" type="monotone" dataKey="OPS" stroke="#3b82f6" strokeWidth={4} dot={{ r: 4 }} />
+                {/* ★投野で表示する線を切り替え */}
+                {isPitcher ? (
+                  <>
+                    <Line yAxisId="left" type="monotone" dataKey="奪三振" stroke="#ef4444" strokeWidth={4} dot={{ r: 4 }} name="奪三振" />
+                    <Line yAxisId="right" type="monotone" dataKey="防御率" stroke="#3b82f6" strokeWidth={4} dot={{ r: 4 }} name="防御率" />
+                  </>
+                ) : (
+                  <>
+                    <Line yAxisId="left" type="monotone" dataKey="本塁打" stroke="#ef4444" strokeWidth={4} dot={{ r: 4 }} name="本塁打" />
+                    <Line yAxisId="right" type="monotone" dataKey="OPS" stroke="#3b82f6" strokeWidth={4} dot={{ r: 4 }} name="OPS" />
+                  </>
+                )}
               </LineChart>
             </ResponsiveContainer>
           </div>
