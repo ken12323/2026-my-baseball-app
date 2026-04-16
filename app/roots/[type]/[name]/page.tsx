@@ -34,7 +34,6 @@ const findValue = (obj: any, keys: string[]) => {
   return 0;
 };
 
-// 年齢を計算する関数
 const calculateAge = (birthDateStr: string | undefined | null) => {
   if (!birthDateStr) return null;
   const match = String(birthDateStr).match(/(\d{4})[-年/.](\d{1,2})[-月/.](\d{1,2})/);
@@ -49,6 +48,21 @@ const calculateAge = (birthDateStr: string | undefined | null) => {
     age--; 
   }
   return age;
+};
+
+// ★追加：4月2日〜翌年4月1日を同じ「年度」として判定する関数
+const getGeneration = (birthDateStr: string | undefined | null) => {
+  if (!birthDateStr) return null;
+  const match = String(birthDateStr).match(/(\d{4})[-年/.](\d{1,2})[-月/.](\d{1,2})/);
+  if (!match) return null;
+  const year = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const day = parseInt(match[3], 10);
+
+  if (month < 4 || (month === 4 && day === 1)) {
+    return year - 1;
+  }
+  return year;
 };
 
 const FULL_TO_SHORT: Record<string, string[]> = {
@@ -86,7 +100,7 @@ const METRIC_INFO: Record<string, { desc: string, calc: string, benchmark: strin
   sv: { desc: '僅差のリードを守り切って試合を終わらせた抑え投手の記録。', calc: 'セーブ条件を満たして登板し、リードを守り切る', benchmark: '20Sで優秀な守護神、30S以上でセーブ王争い。' },
   hp: { desc: 'セーブが付かない場面でリードを守った中継ぎ投手の評価指標。', calc: 'ホールド数 + 救援勝利数', benchmark: '20HPで優秀なセットアッパー、30HP以上でタイトル争い。' },
   k_bb: { desc: '奪三振率(K%)から与四球率(BB%)を引いたもの。味方の守備や運に左右されない投手の真の支配力。', calc: '(奪三振 ÷ 打者) - (与四球 ÷ 打者)', benchmark: '15%で優秀、20%以上は球界を代表する圧倒的なエース。' },
-  roster: { desc: 'この条件（出身校など）に該当する、現在NPBに所属している現役選手の一覧です。', calc: '一軍出場の有無に関わらず全員を表示します。', benchmark: '同級生を比較しやすいよう「年齢の若い順」に並んでいます。' }
+  roster: { desc: 'この条件に該当する、現在NPBに所属している現役選手の一覧です。', calc: '一軍出場の有無に関わらず全員を表示します。', benchmark: '同級生を比較しやすいよう「年齢の若い順」に並んでいます。' }
 };
 
 export default function RootsRankingPage() {
@@ -124,8 +138,28 @@ export default function RootsRankingPage() {
         else if (type === 'draft') query = query.eq('draft_year', name);
         else if (type === 'previous_team') query = query.or(`prev_team_1.eq.${name},prev_team_2.eq.${name},prev_team_3.eq.${name}`);
 
-        const { data: playerList } = await query;
-        if (!playerList || playerList.length === 0) return;
+        const { data: rawPlayerList } = await query;
+        if (!rawPlayerList || rawPlayerList.length === 0) {
+          setLoading(false);
+          return;
+        }
+
+        let playerList = rawPlayerList;
+
+        // ★修正：generation（同級生）の場合はここで学年を判定してフィルタリング！
+        if (type === 'generation') {
+          const targetGen = parseInt(name, 10);
+          playerList = rawPlayerList.filter(p => {
+            const bDate = p.birthday || p.birth_date || '';
+            return getGeneration(bDate) === targetGen;
+          });
+        }
+
+        if (playerList.length === 0) {
+          setPlayers([]);
+          setLoading(false);
+          return;
+        }
 
         const uniqueIds = Array.from(new Set(playerList.map(p => String(p.player_id).padStart(8, '0'))));
 
@@ -249,7 +283,6 @@ export default function RootsRankingPage() {
             
             <div className="flex flex-col gap-2 pt-2">
               {sortKey === 'roster' ? (
-                // ★修正箇所：「生年月日」と「一軍成績」を横に並べて間に縦線を入れる
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
                   <div className="font-bold text-slate-500">
                     生年月日: {p.birth_date || '不明'}
@@ -325,7 +358,10 @@ export default function RootsRankingPage() {
       <div className="max-w-5xl mx-auto">
         <Link href="/" className="text-blue-600 font-black mb-8 inline-flex items-center gap-1 text-sm">← TOP</Link>
         <header className="mb-8 text-center">
-          <h1 className="text-5xl md:text-7xl font-black italic mb-6">{name} <span className="text-blue-600">Stats</span></h1>
+          {/* ★修正：学年ランキングの時は「〇〇年度生まれ」と表示してわかりやすく */}
+          <h1 className="text-5xl md:text-7xl font-black italic mb-6">
+            {type === 'generation' ? `${name}年度生まれ` : name} <span className="text-blue-600">Stats</span>
+          </h1>
           <div className="flex flex-wrap justify-center gap-2 pt-6 border-t">
             {Object.entries(SORT_OPTIONS).map(([key, label]) => (
               <button key={key} onClick={() => setSortKey(key)} className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all ${sortKey === key ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-slate-400 border hover:bg-slate-50'}`}>{label}</button>
