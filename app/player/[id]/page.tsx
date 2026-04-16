@@ -100,16 +100,18 @@ export default function PlayerDetail() {
     if (!yearData) return { fip: '-', war: '0.0', woba: 0, wrcPlus: 0, iso: 0, wrcPlusVal: 0, warVal: 0, ops: 0 };
     
     if (type === 'P') {
-      const ip = formatIP(row.投球回);
+      const stat = row.p;
+      const ip = formatIP(stat.投球回);
       if (ip === 0) return { fip: '-', war: '0.0', fipVal: 0, warVal: 0 };
-      const fipVal = (13 * toF(row.本塁打) + 3 * (toF(row.四球) + toF(row.死球)) - 2 * toF(row.三振)) / ip + yearData.lgFIP_C;
+      const fipVal = (13 * toF(stat.本塁打) + 3 * (toF(stat.四球) + toF(stat.死球)) - 2 * toF(stat.三振 || stat.奪三振)) / ip + yearData.lgFIP_C;
       const warVal = ((yearData.lgERA - fipVal) / 10 + 0.12) * (ip / 9);
       return { fip: fipVal.toFixed(2), war: warVal.toFixed(1), fipVal, warVal };
     } else {
-      const pa = toF(row.打席);
+      const stat = row.b;
+      const pa = toF(stat.打席);
       if (pa === 0) return { woba: 0, wrcPlus: 0, war: '0.0', iso: 0, wrcPlusVal: 0, warVal: 0, ops: 0 };
       
-      const wobaVal = (0.7 * toF(row.四球) + 0.72 * toF(row.死球) + 0.9 * (toF(row.安打)-(toF(row.二塁打)+toF(row.三塁打)+toF(row.本塁打))) + 1.25 * toF(row.二塁打) + 1.6 * toF(row.三塁打) + 2.0 * toF(row.本塁打)) / pa;
+      const wobaVal = (0.7 * toF(stat.四球) + 0.72 * toF(stat.死球) + 0.9 * (toF(stat.安打)-(toF(stat.二塁打)+toF(stat.三塁打)+toF(stat.本塁打))) + 1.25 * toF(stat.二塁打) + 1.6 * toF(stat.三塁打) + 2.0 * toF(stat.本塁打)) / pa;
       
       let teamName = row.所属球団 || player?.team_name || '';
       teamName = teamName.replace('タイガース', '').replace('ジャイアンツ', '').replace('ベイスターズ', '').replace('ドラゴンズ', '').replace('スワローズ', '').replace('カープ', '').replace('ゴールデンイーグルス', '').replace('マリーンズ', '').replace('ファイターズ', '').replace('ライオンズ', '').replace('バファローズ', '').replace('ホークス', '');
@@ -123,9 +125,9 @@ export default function PlayerDetail() {
       const parkCorrectedRuns = battingRuns + (yearData.lgR_PA - (adjPF * yearData.lgR_PA)) * pa;
       const warVal = (parkCorrectedRuns + (POSITION_ADJUSTMENT[player?.position_detail] || 0) * (pa / 600) + (17.5 * pa / 600)) / 10;
       
-      const opsVal = row.OPS ? toF(row.OPS) : (toF(row.出塁率) + toF(row.長打率));
+      const opsVal = stat.OPS ? toF(stat.OPS) : (toF(stat.出塁率) + toF(stat.長打率));
       
-      return { woba: wobaVal, wrcPlus: wrcPlusVal, war: warVal.toFixed(1), iso: toF(row.長打率)-toF(row.打率), wrcPlusVal, warVal, ops: opsVal };
+      return { woba: wobaVal, wrcPlus: wrcPlusVal, war: warVal.toFixed(1), iso: toF(stat.長打率)-toF(stat.打率), wrcPlusVal, warVal, ops: opsVal };
     }
   };
 
@@ -147,15 +149,29 @@ export default function PlayerDetail() {
         ]);
 
         const statsMap = new Map();
-        [...(allB.data || []), ...(allP.data || [])].forEach(s => {
-          const year = Number(s.年度);
-          const existing = statsMap.get(year) || { 年度: year, 所属球団: p.team_name };
+        const bData = allB.data || [];
+        const pData = allP.data || [];
+
+        // ★修正：打撃データと投手データを上書きせず、bとpという独立した箱に保存する
+        bData.forEach(bStat => {
+          const year = Number(bStat.年度);
+          statsMap.set(year, { 
+            年度: year, 
+            所属球団: bStat.所属球団 || p.team_name, 
+            hasBatting: true, 
+            hasPitching: false,
+            b: bStat, 
+            p: {} 
+          });
+        });
+
+        pData.forEach(pStat => {
+          const year = Number(pStat.年度);
+          const existing = statsMap.get(year) || { 年度: year, 所属球団: pStat.所属球団 || p.team_name, hasBatting: false, b: {} };
           statsMap.set(year, { 
             ...existing, 
-            ...s, 
-            所属球団: s.所属球団 || s.球団 || existing.所属球団,
-            hasBatting: existing.hasBatting || (s.打席 !== undefined || s.安打 !== undefined),
-            hasPitching: existing.hasPitching || (s.防御率 !== undefined || s.登板 !== undefined)
+            hasPitching: true, 
+            p: pStat 
           });
         });
 
@@ -165,8 +181,11 @@ export default function PlayerDetail() {
         const highs: Record<string, number> = {};
         const past = merged.slice(1);
         if (past.length > 0) {
-          ['安打', '本塁打', '打点', '勝利', '三振'].forEach(key => {
-            highs[key] = Math.max(...past.map(r => toF(r[key])));
+          ['安打', '本塁打', '打点'].forEach(key => {
+            highs[key] = Math.max(...past.map(r => toF(r.b[key])));
+          });
+          ['勝利', '三振', '奪三振'].forEach(key => {
+            highs[key] = Math.max(...past.map(r => toF(r.p[key])));
           });
           setCareerHighs(highs);
         }
@@ -213,31 +232,33 @@ export default function PlayerDetail() {
 
   const teamInitial = player.team_name.includes('阪神') ? 'T' : player.team_name.includes('中日') ? 'D' : 'P';
   const latest = mergedStats[0] || {};
+  const latestB = latest.b || {};
+  const latestP = latest.p || {};
+  
   const bSaber = latest.hasBatting ? calcSaber(latest, 'B') : ({} as any);
   const pSaber = latest.hasPitching ? calcSaber(latest, 'P') : ({} as any);
   
   const totalWar = player.position_detail === '投手' ? toF(pSaber.warVal) : toF(bSaber.warVal);
   const totalRank = player.position_detail === '投手' ? getRank(toF(pSaber.warVal), 'WAR') : getRank(toF(bSaber.warVal), 'WAR');
 
-  // ★グラフ用データの動的生成（投手と野手で分ける）
   const isPitcher = player.position_detail === '投手';
-  const predictedHR = !isPitcher && toF(latest.試合) > 0 ? Math.round((toF(latest.本塁打) / toF(latest.試合)) * 143) : 0;
+  const predictedHR = !isPitcher && toF(latestB.試合) > 0 ? Math.round((toF(latestB.本塁打) / toF(latestB.試合)) * 143) : 0;
   
   const chartData = [...mergedStats].reverse().map((r, i) => {
     const isThisYear = i === mergedStats.length - 1;
     if (isPitcher) {
-      const era = toF(r.防御率);
+      const era = toF(r.p.防御率);
       return { 
         年度: r.年度, 
-        奪三振: toF(r.三振 || r.奪三振), 
-        防御率: era > 90 ? null : era, // 99.99などの異常値はグラフから除外
+        奪三振: toF(r.p.三振 || r.p.奪三振), 
+        防御率: era > 90 ? null : era, 
         isPrediction: isThisYear 
       };
     } else {
       return { 
         年度: r.年度, 
-        本塁打: isThisYear ? predictedHR : toF(r.本塁打), 
-        OPS: toF(r.出塁率)+toF(r.長打率), 
+        本塁打: isThisYear ? predictedHR : toF(r.b.本塁打), 
+        OPS: toF(r.b.出塁率)+toF(r.b.長打率) || toF(r.b.OPS), 
         isPrediction: isThisYear 
       };
     }
@@ -279,6 +300,102 @@ export default function PlayerDetail() {
     ? `${player.height}cm ／ ${player.weight}kg` 
     : 'データなし';
 
+  // ★分離したテーブル描画コンポーネント（打撃用）
+  const renderBattingTable = () => (
+    <div key="batting" className="mb-12">
+      <div className="flex justify-between items-center mb-6 px-2">
+        <h2 className="text-xl font-black italic border-l-8 border-green-600 pl-4 text-slate-900 uppercase">Batting Data</h2>
+        <div className="flex bg-slate-200 p-1 rounded-xl w-32 shadow-inner">
+          <button onClick={() => setBTab('basic')} className={tabBtn(bTab === 'basic')}>基本</button>
+          <button onClick={() => setBTab('saber')} className={tabBtn(bTab === 'saber')}>分析</button>
+        </div>
+      </div>
+      <div className="overflow-x-auto rounded-[2rem] border-4 border-slate-100 shadow-2xl bg-white text-black">
+        <table className="w-full text-xs text-left border-separate border-spacing-0">
+          <thead className="bg-slate-50 text-slate-400 font-black uppercase">
+            <tr>
+              <th className="sticky left-0 z-30 bg-slate-50 p-4 border-b">年度</th>
+              <th className="p-4 border-b">球団</th>
+              {bTab === 'basic' ? (
+                <><th className="p-4 border-b text-right">打率</th><th className="p-4 border-b text-right">安打</th><th className="p-4 border-b text-right">本塁打</th><th className="p-4 border-b text-right">打点</th><th className="p-4 border-b text-right">OPS</th></>
+              ) : (
+                <><th className="p-4 border-b text-right">WAR</th><th className="p-4 border-b text-right">wOBA</th><th className="p-4 border-b text-right italic">wRC+</th><th className="p-4 border-b text-right">ISOp</th></>
+              )}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 text-slate-900">
+            {mergedStats.filter(s => s.hasBatting).map((row, i) => {
+              const s = calcSaber(row, 'B') as any;
+              const isH = (key: string, val: any) => i !== 0 && toF(val) >= (careerHighs[key] || 999) && toF(val) > 0;
+              return (
+                <tr key={i} className={i === 0 ? "bg-blue-50/50" : ""}>
+                  <td className="sticky left-0 z-20 bg-white p-4 font-black border-r">{row.年度}</td>
+                  <td className="p-4 text-slate-400 font-black">{row.所属球団}</td>
+                  {bTab === 'basic' ? (
+                    <>
+                      <td className="p-4 text-right font-mono">{dotFormat(row.b.打率)}</td>
+                      <td className={`p-4 text-right font-mono ${isH('安打', row.b.安打) ? 'text-red-600 font-black' : ''}`}>{row.b.安打 || 0}</td>
+                      <td className={`p-4 text-right font-mono ${isH('本塁打', row.b.本塁打) ? 'text-red-600 font-black' : ''}`}>{row.b.本塁打 || 0}</td>
+                      <td className={`p-4 text-right font-mono ${isH('打点', row.b.打点) ? 'text-red-600 font-black' : ''}`}>{row.b.打点 || 0}</td>
+                      <td className="p-4 text-right font-black">{dotFormat(s.ops)}</td>
+                    </>
+                  ) : (
+                    <><td className="p-4 text-right font-black text-blue-600">{s.war}</td><td className="p-4 text-right font-mono">{dotFormat(s.woba)}</td><td className="p-4 text-right font-black italic">{s.wrcPlus}</td><td className="p-4 text-right font-mono">{dotFormat(s.iso)}</td></>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  // ★分離したテーブル描画コンポーネント（投手用）
+  const renderPitchingTable = () => (
+    <div key="pitching" className="mb-12">
+      <div className="flex justify-between items-center mb-6 px-2">
+        <h2 className="text-xl font-black italic border-l-8 border-blue-600 pl-4 text-slate-900 uppercase">Pitching Data</h2>
+        <div className="flex bg-slate-200 p-1 rounded-xl w-32 shadow-inner">
+          <button onClick={() => setPTab('basic')} className={tabBtn(pTab === 'basic')}>基本</button>
+          <button onClick={() => setPTab('saber')} className={tabBtn(pTab === 'saber')}>分析</button>
+        </div>
+      </div>
+      <div className="overflow-x-auto rounded-[2rem] border-4 border-slate-100 shadow-2xl bg-white text-black">
+        <table className="w-full text-xs text-left border-separate border-spacing-0">
+          <thead className="bg-slate-50 text-slate-400 font-black uppercase">
+            <tr>
+              <th className="sticky left-0 z-30 bg-slate-50 p-4 border-b">年度</th>
+              <th className="p-4 border-b">球団</th>
+              {pTab === 'basic' ? (
+                <><th className="p-4 border-b text-right">防御率</th><th className="p-4 border-b text-right">勝利</th><th className="p-4 border-b text-right">投球回</th><th className="p-4 border-b text-right">奪三振</th></>
+              ) : (
+                <><th className="p-4 border-b text-right">WAR</th><th className="p-4 border-b text-right">FIP</th><th className="p-4 border-b text-right">K/9</th><th className="p-4 border-b text-right">BB/9</th></>
+              )}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 text-slate-900">
+            {mergedStats.filter(s => s.hasPitching).map((row, i) => {
+              const s = calcSaber(row, 'P') as any;
+              const ip = formatIP(row.p.投球回);
+              return (
+                <tr key={i} className={i === 0 ? "bg-blue-50/50" : ""}>
+                  <td className="sticky left-0 z-20 bg-white p-4 font-black border-r">{row.年度}</td>
+                  <td className="p-4 text-slate-400 font-black">{row.所属球団}</td>
+                  {pTab === 'basic' ? (
+                    <><td className="p-4 text-right font-black text-red-600">{toF(row.p.防御率).toFixed(2)}</td><td className="p-4 text-right font-black">{row.p.勝利 || 0}</td><td className="p-4 text-right">{row.p.投球回 || '0'}</td><td className="p-4 text-right">{row.p.三振 || row.p.奪三振 || 0}</td></>
+                  ) : (
+                    <><td className="p-4 text-right font-black text-blue-600">{s.war}</td><td className="p-4 text-right font-mono">{s.fip}</td><td className="p-4 text-right">{(toF(row.p.三振 || row.p.奪三振)*9/ip).toFixed(2)}</td><td className="p-4 text-right">{(toF(row.p.四球)*9/ip).toFixed(2)}</td></>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
   return (
     <main className="min-h-screen bg-gray-50 p-2 md:p-10 text-slate-900 font-sans tracking-tight" onClick={() => setActiveTooltip(null)}>
       <div className="max-w-2xl mx-auto">
@@ -290,7 +407,7 @@ export default function PlayerDetail() {
               <div className="w-24 h-24 md:w-32 md:h-32 rounded-3xl border-4 border-blue-100 flex items-center justify-center overflow-hidden bg-white mb-4 relative">
                 <img src={`/images/avatars/${teamInitial}_${player.position_detail === '投手' ? 'pitcher_right' : 'batter_right'}.png`} alt="Avatar" className="w-full h-full object-cover" />
                 <div className="absolute bottom-0 right-0 bg-blue-600 text-white font-black italic px-3 py-1 text-2xl rounded-tl-2xl border-t-2 border-l-2 border-white shadow-lg">
-                  #{latest?.背番号 || '--'}
+                  #{latestP?.背番号 || latestB?.背番号 || '--'}
                 </div>
               </div>
               <p className="text-blue-500 font-black text-xs md:text-sm mb-1">{player.team_name}</p>
@@ -318,7 +435,7 @@ export default function PlayerDetail() {
               <span className="text-[10px] font-black text-slate-400 block mb-2 uppercase">{player.position_detail === '投手' ? '奪三振' : 'OPS'} <HelpIcon id="h2" text="出塁率+長打率。得点相関が高い指標"/></span>
               <div className={rankBadge('S')}>STATUS</div>
               <p className="text-slate-900 text-3xl font-black mt-2">
-                {player.position_detail === '投手' ? (latest.三振 || 0) : dotFormat(toF(latest.出塁率) + toF(latest.長打率) || toF(latest.OPS))}
+                {player.position_detail === '投手' ? (latestP.三振 || latestP.奪三振 || 0) : dotFormat(toF(latestB.出塁率) + toF(latestB.長打率) || toF(latestB.OPS))}
               </p>
             </div>
           </div>
@@ -382,7 +499,6 @@ export default function PlayerDetail() {
         </div>
 
         <div className="bg-white rounded-[2rem] p-6 shadow-xl border-4 border-slate-100 mb-8 text-black">
-          {/* ★グラフのタイトルも動的に変更 */}
           <h3 className="text-blue-600 font-black text-xs uppercase border-b-2 border-blue-100 pb-2 mb-4">
             {isPitcher ? '奪三振・防御率トレンド' : '本塁打・OPSトレンド'}
           </h3>
@@ -392,10 +508,8 @@ export default function PlayerDetail() {
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                 <XAxis dataKey="年度" fontSize={10} axisLine={false} tickLine={false} />
                 <YAxis yAxisId="left" fontSize={10} axisLine={false} tickLine={false} />
-                {/* ★防御率(ERA)のために右のY軸を反転(reversed={isPitcher}) */}
                 <YAxis yAxisId="right" orientation="right" fontSize={10} axisLine={false} tickLine={false} reversed={isPitcher} />
                 <ChartTooltip />
-                {/* ★投野で表示する線を切り替え */}
                 {isPitcher ? (
                   <>
                     <Line yAxisId="left" type="monotone" dataKey="奪三振" stroke="#ef4444" strokeWidth={4} dot={{ r: 4 }} name="奪三振" />
@@ -412,99 +526,21 @@ export default function PlayerDetail() {
           </div>
         </div>
 
+        {/* ★投手の時はPitchingが上、野手の時はBattingが上になるように表示順を制御 */}
         <section className="mb-20 space-y-12">
-          <div>
-            <div className="flex justify-between items-center mb-6 px-2">
-              <h2 className="text-xl font-black italic border-l-8 border-green-600 pl-4 text-slate-900 uppercase">Batting Data</h2>
-              <div className="flex bg-slate-200 p-1 rounded-xl w-32 shadow-inner">
-                <button onClick={() => setBTab('basic')} className={tabBtn(bTab === 'basic')}>基本</button>
-                <button onClick={() => setBTab('saber')} className={tabBtn(bTab === 'saber')}>分析</button>
-              </div>
-            </div>
-            <div className="overflow-x-auto rounded-[2rem] border-4 border-slate-100 shadow-2xl bg-white text-black">
-              <table className="w-full text-xs text-left border-separate border-spacing-0">
-                <thead className="bg-slate-50 text-slate-400 font-black uppercase">
-                  <tr>
-                    <th className="sticky left-0 z-30 bg-slate-50 p-4 border-b">年度</th>
-                    <th className="p-4 border-b">球団</th>
-                    {bTab === 'basic' ? (
-                      <><th className="p-4 border-b text-right">打率</th><th className="p-4 border-b text-right">安打</th><th className="p-4 border-b text-right">本塁打</th><th className="p-4 border-b text-right">打点</th><th className="p-4 border-b text-right">OPS</th></>
-                    ) : (
-                      <><th className="p-4 border-b text-right">WAR</th><th className="p-4 border-b text-right">wOBA</th><th className="p-4 border-b text-right italic">wRC+</th><th className="p-4 border-b text-right">ISOp</th></>
-                    )}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-900">
-                  {mergedStats.filter(s => s.hasBatting).map((row, i) => {
-                    const s = calcSaber(row, 'B') as any;
-                    const isH = (key: string, val: any) => i !== 0 && toF(val) >= (careerHighs[key] || 999);
-                    return (
-                      <tr key={i} className={i === 0 ? "bg-blue-50/50" : ""}>
-                        <td className="sticky left-0 z-20 bg-white p-4 font-black border-r">{row.年度}</td>
-                        <td className="p-4 text-slate-400 font-black">{row.所属球団}</td>
-                        {bTab === 'basic' ? (
-                          <>
-                            <td className="p-4 text-right font-mono">{dotFormat(row.打率)}</td>
-                            <td className={`p-4 text-right font-mono ${isH('安打', row.安打) ? 'text-red-600 font-black' : ''}`}>{row.安打}</td>
-                            <td className={`p-4 text-right font-mono ${isH('本塁打', row.本塁打) ? 'text-red-600 font-black' : ''}`}>{row.本塁打}</td>
-                            <td className={`p-4 text-right font-mono ${isH('打点', row.打点) ? 'text-red-600 font-black' : ''}`}>{row.打点}</td>
-                            <td className="p-4 text-right font-black">{dotFormat(s.ops)}</td>
-                          </>
-                        ) : (
-                          <><td className="p-4 text-right font-black text-blue-600">{s.war}</td><td className="p-4 text-right font-mono">{dotFormat(s.woba)}</td><td className="p-4 text-right font-black italic">{s.wrcPlus}</td><td className="p-4 text-right font-mono">{dotFormat(s.iso)}</td></>
-                        )}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {mergedStats.some(s => s.hasPitching) && (
-            <div>
-              <div className="flex justify-between items-center mb-6 px-2">
-                <h2 className="text-xl font-black italic border-l-8 border-blue-600 pl-4 text-slate-900 uppercase">Pitching Data</h2>
-                <div className="flex bg-slate-200 p-1 rounded-xl w-32 shadow-inner">
-                  <button onClick={() => setPTab('basic')} className={tabBtn(pTab === 'basic')}>基本</button>
-                  <button onClick={() => setPTab('saber')} className={tabBtn(pTab === 'saber')}>分析</button>
-                </div>
-              </div>
-              <div className="overflow-x-auto rounded-[2rem] border-4 border-slate-100 shadow-2xl bg-white text-black">
-                <table className="w-full text-xs text-left border-separate border-spacing-0">
-                  <thead className="bg-slate-50 text-slate-400 font-black uppercase">
-                    <tr>
-                      <th className="sticky left-0 z-30 bg-slate-50 p-4 border-b">年度</th>
-                      <th className="p-4 border-b">球団</th>
-                      {pTab === 'basic' ? (
-                        <><th className="p-4 border-b text-right">防御率</th><th className="p-4 border-b text-right">勝利</th><th className="p-4 border-b text-right">投球回</th><th className="p-4 border-b text-right">奪三振</th></>
-                      ) : (
-                        <><th className="p-4 border-b text-right">WAR</th><th className="p-4 border-b text-right">FIP</th><th className="p-4 border-b text-right">K/9</th><th className="p-4 border-b text-right">BB/9</th></>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-slate-900">
-                    {mergedStats.filter(s => s.hasPitching).map((row, i) => {
-                      const s = calcSaber(row, 'P') as any;
-                      const ip = formatIP(row.投球回);
-                      return (
-                        <tr key={i} className={i === 0 ? "bg-blue-50/50" : ""}>
-                          <td className="sticky left-0 z-20 bg-white p-4 font-black border-r">{row.年度}</td>
-                          <td className="p-4 text-slate-400 font-black">{row.所属球団}</td>
-                          {pTab === 'basic' ? (
-                            <><td className="p-4 text-right font-black text-red-600">{toF(row.防御率).toFixed(2)}</td><td className="p-4 text-right font-black">{row.勝利}</td><td className="p-4 text-right">{row.投球回}</td><td className="p-4 text-right">{row.三振}</td></>
-                          ) : (
-                            <><td className="p-4 text-right font-black text-blue-600">{s.war}</td><td className="p-4 text-right font-mono">{s.fip}</td><td className="p-4 text-right">{(toF(row.三振)*9/ip).toFixed(2)}</td><td className="p-4 text-right">{(toF(row.四球)*9/ip).toFixed(2)}</td></>
-                          )}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+          {isPitcher ? (
+            <>
+              {mergedStats.some(s => s.hasPitching) && renderPitchingTable()}
+              {renderBattingTable()}
+            </>
+          ) : (
+            <>
+              {renderBattingTable()}
+              {mergedStats.some(s => s.hasPitching) && renderPitchingTable()}
+            </>
           )}
         </section>
+
       </div>
       <footer className="mt-20 text-center text-gray-400 text-[10px] font-black uppercase pb-12 italic">© 2026 POWERFUL NPB ANALYTICS</footer>
     </main>
