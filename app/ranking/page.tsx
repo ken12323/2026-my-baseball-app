@@ -2,179 +2,242 @@
 
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 
-// スクレイピングした日付に合わせる
-const TARGET_DATE = '2026-03-27';
+// --- 1. 型定義 ---
+type League = 'ALL' | 'Central' | 'Pacific';
+type Role = 'hitter' | 'pitcher';
 
-export default function DailyRanking() {
-  const [rankings, setRankings] = useState<any[]>([]);
+interface PlayerRank {
+  player_id: string;
+  player_name: string;
+  team_name: string;
+  league: string;
+  position: string;
+  // 打撃
+  avg?: number; hits?: number; hr?: number; rbi?: number; ops?: number; wrc_plus?: number;
+  // 投手
+  era?: number; wins?: number; so?: number; whip?: number; fip?: number;
+  // 共通
+  war: number;
+  is_qualified: boolean;
+}
+
+const LEAGUE_MAP: Record<string, string> = {
+  '広島東洋カープ': 'Central', '読売ジャイアンツ': 'Central', '阪神タイガース': 'Central',
+  '横浜DeNAベイスターズ': 'Central', '中日ドラゴンズ': 'Central', '東京ヤクルトスワローズ': 'Central',
+  '福岡ソフトバンクホークス': 'Pacific', '北海道日本ハムファイターズ': 'Pacific', '千葉ロッテマリーンズ': 'Pacific',
+  '東北楽天ゴールデンイーグルス': 'Pacific', 'オリックス・バファローズ': 'Pacific', '埼玉西武ライオンズ': 'Pacific'
+};
+
+// --- 2. メインコンポーネント ---
+function Leaderboard() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  // URLパラメータから状態を取得
+  const role = (searchParams.get('role') as Role) || 'hitter';
+  const league = (searchParams.get('league') as League) || 'ALL';
+  const sortKey = searchParams.get('sort') || 'war';
+
+  const [players, setPlayers] = useState<PlayerRank[]>([]);
   const [loading, setLoading] = useState(true);
-  const [openDetail, setOpenDetail] = useState<string | null>(null);
+
+  // 指標の定義
+  const HITTER_METRICS = [
+    { key: 'war', label: 'WAR' }, { key: 'avg', label: '打率' }, { key: 'hr', label: '本塁打' }, 
+    { key: 'hits', label: '安打' }, { key: 'rbi', label: '打点' }, { key: 'ops', label: 'OPS' }, { key: 'wrc_plus', label: 'wRC+' }
+  ];
+  const PITCHER_METRICS = [
+    { key: 'war', label: 'WAR' }, { key: 'era', label: '防御率' }, { key: 'so', label: '奪三振' }, 
+    { key: 'wins', label: '勝利' }, { key: 'whip', label: 'WHIP' }, { key: 'fip', label: 'FIP' }
+  ];
+  const activeMetrics = role === 'hitter' ? HITTER_METRICS : PITCHER_METRICS;
 
   useEffect(() => {
-    async function getRanking() {
+    async function fetchRanking() {
       try {
         setLoading(true);
+        const table = role === 'hitter' ? 'batting_stats' : 'pitching_stats';
         
-        // 【修正完了】team を team_name に書き換えました
-        const { data, error } = await supabase
-          .from('daily_performance')
-          .select(`
-            h_hits, 
-            h_hr, 
-            h_rbi, 
-            player_name,
-            players ( 
-              high_school, 
-              team_name 
-            )
-          `)
-          .eq('date', TARGET_DATE);
+        // 1. 2026年の成績を取得
+        const { data: statsData } = await supabase.from(table).select('*').eq('年度', 2026);
+        // 2. 選手基本情報を取得
+        const { data: playersData } = await supabase.from('players').select('*');
 
-        if (error) {
-          console.error('データ取得に失敗しました:', error.message);
-          setRankings([]);
-          return;
-        }
+        if (!statsData || !playersData) return;
 
-        if (data) {
-          const agg: Record<string, any> = {};
+        const combined: PlayerRank[] = statsData.map(s => {
+          const stat = s as any;
+          const p = playersData.find(player => String(player.player_id).padStart(8, '0') === String(stat.player_id).padStart(8, '0'));
+          const team = stat.所属球団 || p?.team_name || '不明';
+          
+          // WARの取得（DBにあるカラム名を優先、なければ0）
+          const warVal = role === 'hitter' 
+            ? toF(stat['野手WAR'] || stat.war || stat.WAR) 
+            : toF(stat['投手WAR'] || stat.war || stat.WAR);
 
-          data.forEach((row: any) => {
-            const school = row.players?.high_school || '未設定';
-            if (school === '未設定') return;
+          return {
+            player_id: String(stat.player_id).padStart(8, '0'),
+            player_name: stat.名前 || p?.player_name || '不明',
+            team_name: team,
+            league: LEAGUE_MAP[team] || 'Other',
+            position: p?.position_detail || (role === 'hitter' ? '内野手' : '投手'),
+            war: warVal,
+            // 打撃指標
+            avg: toF(stat.打率), hits: toF(stat.安打), hr: toF(stat.本塁打), rbi: toF(stat.打点), 
+            ops: toF(stat.OPS || (toF(stat.出塁率) + toF(stat.長打率))), wrc_plus: toF(stat['wRC+']),
+            // 投手指標
+            era: toF(stat.防御率), wins: toF(stat.勝利), so: toF(stat.三振 || stat.奪三振), 
+            whip: toF(stat.WHIP), fip: toF(stat.FIP),
+            is_qualified: true // 一旦簡易化
+          };
+        });
 
-            if (!agg[school]) {
-              agg[school] = { school, hits: 0, hr: 0, players: [] };
-            }
+        // リーグフィルター適用
+        const filtered = league === 'ALL' ? combined : combined.filter(p => p.league === league);
 
-            agg[school].hits += row.h_hits;
-            agg[school].hr += row.h_hr;
+        // ソート適用
+        const sorted = filtered.sort((a, b) => {
+          const valA = (a as any)[sortKey] ?? -999;
+          const valB = (b as any)[sortKey] ?? -999;
+          // 防御率・FIP・WHIPは低い順
+          if (['era', 'fip', 'whip'].includes(sortKey)) return valA - valB;
+          return valB - valA;
+        });
 
-            if (row.h_hits > 0 || row.h_hr > 0) {
-              agg[school].players.push({
-                name: row.player_name,
-                team: row.players?.team_name || '不明', // ここも修正
-                hits: row.h_hits,
-                hr: row.h_hr
-              });
-            }
-          });
-
-          const sorted = Object.values(agg).sort((a: any, b: any) => b.hits - a.hits);
-          setRankings(sorted);
-        }
-      } catch (err) {
-        console.error('予期せぬエラー:', err);
+        setPlayers(sorted.slice(0, 100)); // 上位100名
       } finally {
         setLoading(false);
       }
     }
+    fetchRanking();
+  }, [role, league, sortKey]);
 
-    getRanking();
-  }, []);
+  const toF = (val: any) => {
+    const f = parseFloat(val);
+    return isNaN(f) ? 0 : f;
+  };
 
-  if (loading) {
-    return (
-      <div className="p-20 text-center font-black animate-pulse text-blue-600 text-2xl italic">
-        LOADING DATA...
-      </div>
-    );
-  }
+  const updateParam = (key: string, value: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set(key, value);
+    if (key === 'role') params.set('sort', 'war'); // ロール変更時はWARにリセット
+    router.push(`/ranking?${params.toString()}`);
+  };
 
   return (
-    <main className="min-h-screen bg-gray-50 p-4 md:p-10 font-sans tracking-tight">
-      <div className="max-w-2xl mx-auto">
-        <header className="mb-10 text-center">
-          <Link href="/" className="text-blue-600 font-black mb-6 inline-block hover:scale-110 transition-transform italic text-xl underline decoration-4 underline-offset-8">
-            ← BACK TO MENU
-          </Link>
-          <div className="bg-gradient-to-br from-blue-600 to-blue-900 p-8 rounded-[3rem] shadow-2xl text-white border-b-[12px] border-blue-950">
-            <h1 className="text-4xl md:text-5xl font-black italic tracking-tighter drop-shadow-md text-white">
-              母校別・昨日の活躍
-            </h1>
-            <p className="font-bold opacity-90 mt-3 tracking-widest text-sm bg-blue-500/30 py-1 px-4 rounded-full inline-block text-white">
-              {TARGET_DATE} RESULTS
-            </p>
-          </div>
-        </header>
+    <div className="max-w-4xl mx-auto">
+      {/* 1. モード切替グローバルナビ */}
+      <div className="flex bg-slate-200 p-1.5 rounded-2xl mb-6 shadow-inner">
+        <Link href="/" className="flex-1 text-center py-3.5 rounded-xl text-sm font-black text-slate-500 hover:text-blue-900 transition-all flex items-center justify-center gap-2 hover:bg-slate-100/50">
+          <span className="text-lg">🌱</span> ルーツ別
+        </Link>
+        <div className="flex-1 text-center py-3.5 rounded-xl text-sm font-black bg-white text-blue-900 shadow-sm flex items-center justify-center gap-2">
+          <span className="text-lg">🏆</span> NPB総合
+        </div>
+      </div>
 
-        <div className="space-y-6">
-          {rankings.length > 0 ? (
-            rankings.map((item, i) => (
-              <div key={i} className="bg-white rounded-[2.5rem] shadow-xl overflow-hidden border-4 border-white transition-all hover:shadow-2xl">
-                <div 
-                  className="p-6 flex justify-between items-center cursor-pointer hover:bg-blue-50 active:scale-[0.98] transition-all"
-                  onClick={() => setOpenDetail(openDetail === item.school ? null : item.school)}
-                >
-                  <div className="flex items-center gap-5">
-                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center font-black text-3xl shadow-lg transform -rotate-3
-                      ${i === 0 ? 'bg-yellow-400 border-b-4 border-yellow-600' : 
-                        i === 1 ? 'bg-slate-300 border-b-4 border-slate-500' : 
-                        i === 2 ? 'bg-amber-600 border-b-4 border-amber-800' : 'bg-blue-900 text-white'}`}>
-                      {i + 1}
-                    </div>
-                    <div>
-                      <h2 className="text-2xl md:text-3xl font-black text-blue-950 leading-none mb-1">{item.school}</h2>
-                      <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest italic">Click for details</p>
-                    </div>
-                  </div>
-                  <div className="flex gap-6 text-center pr-2">
-                    <div>
-                      <p className="text-[10px] font-black text-gray-400 uppercase mb-1">Hits</p>
-                      <p className="text-4xl font-black text-blue-600 leading-none">{item.hits}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-black text-red-400 uppercase mb-1">HR</p>
-                      <p className="text-4xl font-black text-red-600 leading-none">{item.hr}</p>
-                    </div>
+      {/* 2. フィルターセクション */}
+      <div className="bg-white rounded-2xl shadow-xl border-t-8 border-orange-500 p-5 mb-6">
+        <div className="flex flex-col gap-4">
+          {/* 野手・投手切り替え */}
+          <div className="flex bg-slate-100 p-1 rounded-xl">
+            <button onClick={() => updateParam('role', 'hitter')} className={`flex-1 py-2.5 rounded-lg text-xs font-black transition-all ${role === 'hitter' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400'}`}>野手ランキング</button>
+            <button onClick={() => updateParam('role', 'pitcher')} className={`flex-1 py-2.5 rounded-lg text-xs font-black transition-all ${role === 'pitcher' ? 'bg-red-600 text-white shadow-md' : 'text-slate-400'}`}>投手ランキング</button>
+          </div>
+
+          {/* リーグ切り替え */}
+          <div className="flex gap-2">
+            {(['ALL', 'Central', 'Pacific'] as League[]).map(l => (
+              <button key={l} onClick={() => updateParam('league', l)} className={`flex-1 py-2 rounded-lg text-[10px] font-black border-2 transition-all ${league === l ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-100 text-slate-400'}`}>
+                {l === 'ALL' ? '両リーグ' : l === 'Central' ? 'セ・リーグ' : 'パ・リーグ'}
+              </button>
+            ))}
+          </div>
+
+          {/* 指標切り替え（横スクロール対応） */}
+          <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+            {activeMetrics.map(m => (
+              <button key={m.key} onClick={() => updateParam('sort', m.key)} className={`whitespace-nowrap px-5 py-2 rounded-full text-[10px] font-black transition-all ${sortKey === m.key ? 'bg-orange-500 text-white shadow-lg' : 'bg-slate-50 text-slate-400 border border-slate-100'}`}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* 3. ランキングリスト */}
+      {loading ? (
+        <div className="text-center py-20 text-orange-500 font-black animate-pulse text-xl">NPBデータを解析中...</div>
+      ) : (
+        <div className="space-y-3 pb-20">
+          {players.map((p, index) => (
+            <Link href={`/player/${p.player_id}`} key={p.player_id} className="block bg-white rounded-2xl p-4 shadow-sm border border-slate-100 hover:border-orange-300 transition-all group">
+              <div className="flex items-center gap-4">
+                {/* 順位 */}
+                <div className={`text-3xl font-black italic w-10 text-center ${index < 3 ? 'text-orange-500' : 'text-slate-200'}`}>
+                  {index + 1}
+                </div>
+
+                {/* 選手メイン情報 */}
+                <div className="flex-1 min-w-0">
+                  <p className="text-[9px] font-black text-blue-500 uppercase mb-0.5">{p.team_name}</p>
+                  <h2 className="text-lg font-black text-slate-800 group-hover:text-blue-600 transition-colors leading-none mb-1.5">{p.player_name}</h2>
+                  <div className="flex gap-2 text-[10px] font-bold text-slate-400">
+                    <span>{p.position}</span>
+                    <span className="border-l pl-2">2026年実績</span>
                   </div>
                 </div>
 
-                {openDetail === item.school && (
-                  <div className="bg-blue-50/50 p-6 border-t-4 border-dotted border-blue-100">
-                    <div className="grid grid-cols-1 gap-3">
-                      {item.players.map((p: any, idx: number) => (
-                        <div key={idx} className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-blue-50">
-                          <div className="flex flex-col">
-                            <span className="font-black text-blue-900 text-lg">{p.name}</span>
-                            <span className="text-[11px] font-bold text-white bg-blue-500 px-3 py-0.5 rounded-full inline-block w-fit mt-1 shadow-sm">
-                              {p.team}
-                            </span>
-                          </div>
-                          <div className="flex gap-5 font-black text-gray-600">
-                            <div className="flex flex-col items-center">
-                              <span className="text-[9px] text-gray-400 uppercase">Hits</span>
-                              <span className="text-xl text-blue-600">{p.hits}</span>
-                            </div>
-                            {p.hr > 0 && (
-                              <div className="flex flex-col items-center">
-                                <span className="text-[9px] text-red-400 uppercase">HR</span>
-                                <span className="text-xl text-red-600">{p.hr}</span>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                {/* メイン数値（右端） */}
+                <div className="text-right border-l pl-4 min-w-[80px]">
+                  <p className="text-[9px] font-black text-slate-300 uppercase mb-1">{activeMetrics.find(m => m.key === sortKey)?.label}</p>
+                  <div className="text-2xl font-black italic text-slate-900 leading-none">
+                    {sortKey === 'avg' ? `.${String(p.avg?.toFixed(3)).split('.')[1]}` : 
+                     sortKey === 'war' ? (p.war > 0 ? `+${p.war.toFixed(1)}` : p.war.toFixed(1)) : 
+                     ['era', 'ops', 'whip', 'fip'].includes(sortKey) ? (p as any)[sortKey]?.toFixed(2) : 
+                     (p as any)[sortKey]}
                   </div>
+                </div>
+              </div>
+              
+              {/* サブスタッツ（下段に細かく表示） */}
+              <div className="mt-3 pt-3 border-t border-slate-50 flex gap-4 text-[10px] font-bold text-slate-500">
+                {role === 'hitter' ? (
+                  <>
+                    <span>打率 .{String(p.avg?.toFixed(3)).split('.')[1]}</span>
+                    <span>HR {p.hr}</span>
+                    <span>打点 {p.rbi}</span>
+                    <span className="ml-auto text-blue-600 bg-blue-50 px-2 py-0.5 rounded">WAR {p.war > 0 ? `+${p.war.toFixed(1)}` : p.war.toFixed(1)}</span>
+                  </>
+                ) : (
+                  <>
+                    <span>防御率 {p.era?.toFixed(2)}</span>
+                    <span>勝利 {p.wins}</span>
+                    <span>奪三振 {p.so}</span>
+                    <span className="ml-auto text-red-600 bg-red-50 px-2 py-0.5 rounded">WAR {p.war > 0 ? `+${p.war.toFixed(1)}` : p.war.toFixed(1)}</span>
+                  </>
                 )}
               </div>
-            ))
-          ) : (
-            <div className="bg-white rounded-[3rem] p-20 text-center border-4 border-dashed border-gray-200">
-              <p className="text-gray-400 font-black italic text-xl">
-                データが見つかりません。
-              </p>
-            </div>
-          )}
+            </Link>
+          ))}
         </div>
-        
-        <footer className="mt-20 text-center text-gray-300 text-[10px] font-black uppercase tracking-[0.5em] italic pb-10">
-          © 2026 NPB ALUMNI ANALYTICS
-        </footer>
-      </div>
+      )}
+    </div>
+  );
+}
+
+export default function RankingPage() {
+  return (
+    <main className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-900">
+      <Suspense fallback={<div className="text-center py-20 font-black">Loading...</div>}>
+        <Leaderboard />
+      </Suspense>
+      <footer className="mt-20 text-center text-slate-400 text-[10px] font-black uppercase tracking-[0.5em] pb-12 italic">
+        © 2026 BASEBALL ROOTS ANALYTICS
+      </footer>
     </main>
   );
 }
