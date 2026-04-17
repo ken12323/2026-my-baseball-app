@@ -36,7 +36,6 @@ const CATEGORY_URL_MAP: Record<string, string> = {
 // --- 2. メインのロジック部分 ---
 function RankingList() {
   const searchParams = useSearchParams();
-  // ★ 修正1: URLパラメータに period がない場合のデフォルトを 'season'（通算）に変更
   const period = (searchParams.get('period') as Period) || 'season';
   const category = (searchParams.get('cat') as Category) || 'high_school';
 
@@ -64,17 +63,14 @@ function RankingList() {
 
         const stats: Record<string, RankingRow> = {};
 
-        // 【修正の核心】seasonの場合はbatting_statsから取得、それ以外はdaily_performanceから取得
         if (period === 'season') {
           const [{ data: battingData }, { data: playersData }] = await Promise.all([
-            // ★ 修正1: 日本語カラム名でのParserErrorを防ぐため '*' に変更
             supabase.from('batting_stats').select('*').eq('年度', 2026),
             supabase.from('players').select('*')
           ]);
 
           if (battingData && playersData) {
             battingData.forEach((row) => {
-              // ★ 修正2: TSの型エラー（プロパティが存在しません）を防ぐため any でキャスト
               const bat = row as any; 
               const safeId = String(bat.player_id).padStart(8, '0');
               const player = playersData.find((p) => String(p.player_id).padStart(8, '0') === safeId);
@@ -115,7 +111,6 @@ function RankingList() {
             });
           }
         } else {
-          // today, yesterday, weekly の処理 (既存のdaily_performanceを利用)
           let query = supabase.from('daily_performance').select('*');
           if (period === 'today') query = query.eq('date', todayStr);
           else if (period === 'yesterday') query = query.eq('date', yesterdayStr);
@@ -187,7 +182,6 @@ function RankingList() {
             <h1 className="text-3xl font-black text-blue-900 italic tracking-tighter leading-none mb-1.5">
               BASEBALL <span className="text-red-600">ROOTS</span>
             </h1>
-            {/* ★ 修正2: サイトのコンセプト（説明文）を追加して離脱率を下げる */}
             <p className="text-[10px] text-slate-500 font-bold tracking-tight">出身校や地元など、あらゆる「ルーツ」からプロ野球選手の現在地を比較。</p>
           </div>
           <div className="text-right">
@@ -214,6 +208,25 @@ function RankingList() {
 
       {loading ? (
         <div className="text-center py-20 text-blue-900 font-black animate-pulse">データを集計中...</div>
+      ) : ranking.length === 0 ? (
+        /* ★ 今回の追加部分：データがない時の専用デザイン（Empty State） */
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 md:p-12 text-center my-8">
+          <div className="text-6xl mb-6 animate-bounce">⚾️</div>
+          <h2 className="text-2xl md:text-3xl font-black text-slate-800 mb-4 tracking-tight">
+            {period === 'today' ? '本日の試合データはまだ集計されていません' : '指定された期間のデータがありません'}
+          </h2>
+          <p className="text-sm md:text-base font-bold text-slate-500 mb-8 leading-relaxed">
+            試合開始まで、<span className="text-blue-600 border-b-2 border-blue-200">昨日のヒーロー</span>や<br className="md:hidden" /><span className="text-blue-600 border-b-2 border-blue-200">今シーズンの通算ランキング</span>をチェックしよう！
+          </p>
+          <div className="flex flex-col md:flex-row justify-center gap-4">
+            <Link href={`/?period=yesterday&cat=${category}`} className="bg-white border-2 border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 font-black py-4 px-8 rounded-xl transition-all shadow-sm">
+              昨日の成績を見る
+            </Link>
+            <Link href={`/?period=season&cat=${category}`} className="bg-blue-600 hover:bg-blue-700 text-white font-black py-4 px-8 rounded-xl transition-all shadow-md">
+              通算成績を見る
+            </Link>
+          </div>
+        </div>
       ) : (
         <div className="space-y-3">
           {ranking.map((item, index) => {
