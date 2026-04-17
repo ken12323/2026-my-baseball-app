@@ -36,7 +36,8 @@ const CATEGORY_URL_MAP: Record<string, string> = {
 // --- 2. メインのロジック部分 ---
 function RankingList() {
   const searchParams = useSearchParams();
-  const period = (searchParams.get('period') as Period) || 'today';
+  // ★ 修正1: URLパラメータに period がない場合のデフォルトを 'season'（通算）に変更
+  const period = (searchParams.get('period') as Period) || 'season';
   const category = (searchParams.get('cat') as Category) || 'high_school';
 
   const [ranking, setRanking] = useState<RankingRow[]>([]);
@@ -64,7 +65,7 @@ function RankingList() {
         const stats: Record<string, RankingRow> = {};
 
         // 【修正の核心】seasonの場合はbatting_statsから取得、それ以外はdaily_performanceから取得
-       if (period === 'season') {
+        if (period === 'season') {
           const [{ data: battingData }, { data: playersData }] = await Promise.all([
             // ★ 修正1: 日本語カラム名でのParserErrorを防ぐため '*' に変更
             supabase.from('batting_stats').select('*').eq('年度', 2026),
@@ -181,16 +182,21 @@ function RankingList() {
   return (
     <div className="max-w-4xl mx-auto">
       <header className="mb-6 bg-white p-6 rounded-2xl shadow-xl border-t-8 border-blue-900">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-black text-blue-900 italic tracking-tighter">
-            BASEBALL <span className="text-red-600">ROOTS</span>
-          </h1>
+        <div className="flex justify-between items-start mb-4">
+          <div>
+            <h1 className="text-3xl font-black text-blue-900 italic tracking-tighter leading-none mb-1.5">
+              BASEBALL <span className="text-red-600">ROOTS</span>
+            </h1>
+            {/* ★ 修正2: サイトのコンセプト（説明文）を追加して離脱率を下げる */}
+            <p className="text-[10px] text-slate-500 font-bold tracking-tight">出身校や地元など、あらゆる「ルーツ」からプロ野球選手の現在地を比較。</p>
+          </div>
           <div className="text-right">
             <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">{period} / {category}</p>
             <p className="text-[10px] text-slate-400 font-bold mt-1">{displayDate}</p>
           </div>
         </div>
-        <nav className="flex flex-wrap gap-1.5">
+        
+        <nav className="flex flex-wrap gap-1.5 mt-6">
           {[{ id: 'high_school', n: '高校' }, { id: 'university', n: '大学' }, { id: 'prev_team', n: '前所属' }, { id: 'draft_year', n: 'ドラフト' }, { id: 'hometown', n: '出身地' }].map(c => (
             <Link key={c.id} href={`/?period=${period}&cat=${c.id}`} className={`px-4 py-2 rounded-lg text-[11px] font-black transition-all ${category === c.id ? 'bg-blue-900 text-white shadow-lg' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'}`}>
               {c.n}
