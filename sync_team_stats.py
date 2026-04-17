@@ -121,7 +121,9 @@ def main():
         pa = b.get("打席", 0)
         if pa > 0:
             h, bb, hbp, tb = b.get("安打", 0), b.get("四球", 0), b.get("死球", 0), b.get("塁打", 0)
-            b["出塁率"], b["長打率"] = round((h+bb+hbp)/pa, 3), round(tb/b.get("打数", 1), 3)
+            # 打数(AB)が0の場合の0除算回避
+            ab = max(b.get("打数", 0), 1)
+            b["出塁率"], b["長打率"] = round((h+bb+hbp)/pa, 3), round(tb/ab, 3)
             b["OPS"] = round(b["出塁率"] + b["長打率"], 3)
             b["ISOp"] = round(b["長打率"] - b.get("打率", 0), 3)
             h1 = h - (b.get("二塁打", 0) + b.get("三塁打", 0) + b.get("本塁打", 0))
