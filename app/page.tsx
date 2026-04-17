@@ -176,6 +176,17 @@ function RankingList() {
 
   return (
     <div className="max-w-4xl mx-auto">
+      
+      {/* ★ 追加：モード切替のグローバルナビゲーション */}
+      <div className="flex bg-slate-200 p-1.5 rounded-2xl mb-6 shadow-inner">
+        <div className="flex-1 text-center py-3.5 rounded-xl text-sm font-black bg-white text-blue-900 shadow-sm flex items-center justify-center gap-2">
+          <span className="text-lg">🌱</span> ルーツ別ランキング
+        </div>
+        <Link href="/ranking" className="flex-1 text-center py-3.5 rounded-xl text-sm font-black text-slate-500 hover:text-blue-900 transition-all flex items-center justify-center gap-2 hover:bg-slate-100/50">
+          <span className="text-lg">🏆</span> NPB総合リーダーボード
+        </Link>
+      </div>
+
       <header className="mb-6 bg-white p-6 rounded-2xl shadow-xl border-t-8 border-blue-900">
         <div className="flex justify-between items-start mb-4">
           <div>
@@ -209,7 +220,6 @@ function RankingList() {
       {loading ? (
         <div className="text-center py-20 text-blue-900 font-black animate-pulse">データを集計中...</div>
       ) : ranking.length === 0 ? (
-        /* ★ 今回の追加部分：データがない時の専用デザイン（Empty State） */
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 md:p-12 text-center my-8">
           <div className="text-6xl mb-6 animate-bounce">⚾️</div>
           <h2 className="text-2xl md:text-3xl font-black text-slate-800 mb-4 tracking-tight">
@@ -266,7 +276,6 @@ function RankingList() {
                   </div>
 
                   <div className="flex flex-wrap gap-2">
-                    {/* 通算の場合はヒット数が0の選手（投手など）は除外して表示をスッキリさせる */}
                     {item.players.filter(p => p.hits > 0).sort((a,b)=>b.hits - a.hits).map(p => (
                       <Link key={p.name} href={`/player/${p.id}`} className="bg-white border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm text-xs flex items-center gap-2 hover:border-blue-500 hover:bg-blue-50 transition-all group/item">
                         <span className="text-[9px] bg-slate-100 px-1 rounded text-slate-500 font-bold">{p.team}</span>
