@@ -50,7 +50,6 @@ const calculateAge = (birthDateStr: string | undefined | null) => {
   return age;
 };
 
-// ★追加：4月2日〜翌年4月1日を同じ「年度」として判定する関数
 const getGeneration = (birthDateStr: string | undefined | null) => {
   if (!birthDateStr) return null;
   const match = String(birthDateStr).match(/(\d{4})[-年/.](\d{1,2})[-月/.](\d{1,2})/);
@@ -146,7 +145,6 @@ export default function RootsRankingPage() {
 
         let playerList = rawPlayerList;
 
-        // ★修正：generation（同級生）の場合はここで学年を判定してフィルタリング！
         if (type === 'generation') {
           const targetGen = parseInt(name, 10);
           playerList = rawPlayerList.filter(p => {
@@ -330,7 +328,9 @@ export default function RootsRankingPage() {
                 <div>
                   <p className="text-[9px] font-black text-slate-300 uppercase mb-1">{SORT_OPTIONS[sortKey]}</p>
                   <div className="text-3xl md:text-4xl font-black italic text-slate-900 leading-none">
+                    {/* ★修正: OPSの時は常に3桁表示（toFixed(3)）にする */}
                     {sortKey === 'avg' ? `.${String(p.avg.toFixed(3)).split('.')[1]}` : 
+                     sortKey === 'ops' ? p.ops.toFixed(3) : 
                      sortKey === 'era' ? (p.era > 90 ? '-.--' : p.era.toFixed(2)) : 
                      sortKey === 'k_bb' ? `${p.k_bb.toFixed(1)}%` : 
                      sortKey === 'war' ? (p.war > 0 ? `+${Math.round(p.war * 100) / 100}` : Math.round(p.war * 100) / 100) :
@@ -354,11 +354,10 @@ export default function RootsRankingPage() {
   };
 
   return (
-    <main className="min-h-screen bg-slate-50 p-4 md:p-10 text-slate-900 font-sans tracking-tight">
+    <main className="min-h-screen bg-gray-50 p-4 md:p-10 text-slate-900 font-sans tracking-tight">
       <div className="max-w-5xl mx-auto">
         <Link href="/" className="text-blue-600 font-black mb-8 inline-flex items-center gap-1 text-sm">← TOP</Link>
         <header className="mb-8 text-center">
-          {/* ★修正：学年ランキングの時は「〇〇年度生まれ」と表示してわかりやすく */}
           <h1 className="text-5xl md:text-7xl font-black italic mb-6">
             {type === 'generation' ? `${name}年度生まれ` : name} <span className="text-blue-600">Stats</span>
           </h1>
