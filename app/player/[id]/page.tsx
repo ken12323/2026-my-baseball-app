@@ -196,13 +196,20 @@ export default function PlayerDetail() {
     fetchData();
   }, [id]);
 
-  // ★各項目に設定できるインフォメーションアイコン
-  const HelpIcon = ({ id, text }: { id: string, text: string }) => (
+  // ★修正：HelpIconに「目安（benchmark）」を追加し、デザインも読みやすく調整
+  const HelpIcon = ({ id, text, benchmark }: { id: string, text: string, benchmark?: string }) => (
     <span className="relative inline-block ml-1 group">
       <button onClick={(e) => { e.stopPropagation(); setActiveTooltip(activeTooltip === id ? null : id); }} className="w-3.5 h-3.5 rounded-full bg-slate-200 hover:bg-blue-200 text-slate-500 hover:text-blue-700 text-[9px] flex items-center justify-center font-bold transition-colors">i</button>
       {activeTooltip === id && (
-        <div className="absolute z-[100] bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2.5 bg-slate-800 text-white text-[10px] rounded-xl shadow-xl text-center leading-relaxed">
-          {text}<div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-slate-800"></div>
+        <div className="absolute z-[100] bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 p-3 bg-slate-800 text-white text-[10px] rounded-xl shadow-xl text-left leading-relaxed">
+          <p className="mb-1">{text}</p>
+          {benchmark && (
+            <div className="mt-2 pt-2 border-t border-slate-600 flex gap-1.5">
+              <span className="bg-blue-600/30 text-blue-300 px-1.5 py-0.5 rounded text-[8px] font-black tracking-wider whitespace-nowrap h-fit">目安</span>
+              <span className="text-slate-300 text-[9px] leading-tight">{benchmark}</span>
+            </div>
+          )}
+          <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-slate-800"></div>
         </div>
       )}
     </span>
@@ -280,7 +287,6 @@ export default function PlayerDetail() {
     );
   };
 
-  // 打撃成績用アコーディオン
   const renderBattingAccordion = () => (
     <div key="batting" className="mb-12">
       <div className="flex justify-between items-center mb-4 px-2">
@@ -291,7 +297,6 @@ export default function PlayerDetail() {
           const s = calcSaber(row, 'B') as any;
           const isOpen = expandedB === i;
           return (
-            // ★ overflow-visible に変更し、ポップアップが見切れないように修正
             <div key={i} className="bg-white border-[3px] border-slate-100 rounded-2xl shadow-sm transition-all relative overflow-visible">
               <button 
                 onClick={() => setExpandedB(isOpen ? null : i)}
@@ -303,7 +308,6 @@ export default function PlayerDetail() {
                 </div>
                 <div className="flex items-center justify-between md:justify-end gap-4 w-full md:w-auto text-sm font-black text-slate-700">
                   <div className="flex gap-4 md:gap-6 text-[12px] md:text-sm flex-1 justify-around md:justify-end">
-                    {/* ★ PCでもラベルを常に表示させるように修正 */}
                     <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">試合</span><span className="font-bold">{row.b.試合 || 0}</span></div>
                     <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">打率</span><span className="font-bold">{dotFormat(row.b.打率)}</span></div>
                     <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">HR</span><span className="font-bold">{row.b.本塁打 || 0}</span></div>
@@ -331,12 +335,11 @@ export default function PlayerDetail() {
                     <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">出塁率</div><div className="font-bold text-slate-800 text-sm">{dotFormat(row.b.出塁率)}</div></div>
                     <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">長打率</div><div className="font-bold text-slate-800 text-sm">{dotFormat(row.b.長打率)}</div></div>
                     
-                    {/* ★インフォメーションアイコンを追加 */}
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">wOBA<HelpIcon id={`woba_${i}`} text="1打席あたりにどれだけ得点産出に貢献したかを表す指標"/></div><div className="font-bold text-slate-800 text-sm">{dotFormat(s.woba)}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">ISOp<HelpIcon id={`isop_${i}`} text="長打力（打率を含まない純粋な長打の割合）"/></div><div className="font-bold text-slate-800 text-sm">{dotFormat(s.iso)}</div></div>
+                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">wOBA<HelpIcon id={`woba_${i}`} text="1打席あたりにどれだけ得点産出に貢献したかを表す指標" benchmark=".330前後が平均、.400超えで一流打者。"/></div><div className="font-bold text-slate-800 text-sm">{dotFormat(s.woba)}</div></div>
+                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">ISOp<HelpIcon id={`isop_${i}`} text="長打力（打率を含まない純粋な長打の割合）" benchmark=".150で平均的、.200以上で強打者、.250以上は長距離砲。"/></div><div className="font-bold text-slate-800 text-sm">{dotFormat(s.iso)}</div></div>
                     
-                    <div className="bg-white rounded-lg border border-orange-100 py-1 shadow-sm"><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">wRC+<HelpIcon id={`wrcplus_${i}`} text="球場や時代を補正した打撃の傑出度。100が平均"/></div><div className="font-black text-orange-600 text-base">{s.wrcPlus}</div></div>
-                    <div className="bg-white rounded-lg border border-blue-100 py-1 shadow-sm"><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">WAR<HelpIcon id={`war_b_${i}`} text="打撃・走塁・守備を総合評価し、控え選手に比べてチームに何勝分上乗せしたか"/></div><div className="font-black text-blue-600 text-base">{s.war}</div></div>
+                    <div className="bg-white rounded-lg border border-orange-100 py-1 shadow-sm"><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">wRC+<HelpIcon id={`wrcplus_${i}`} text="球場や時代を補正した打撃の傑出度。" benchmark="100が平均、120で優秀、140以上はMVP級。"/></div><div className="font-black text-orange-600 text-base">{s.wrcPlus}</div></div>
+                    <div className="bg-white rounded-lg border border-blue-100 py-1 shadow-sm"><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">WAR<HelpIcon id={`war_b_${i}`} text="打撃・走塁・守備を総合評価し、控え選手に比べてチームに何勝分上乗せしたか" benchmark="2.0でレギュラー、4.0でオールスター級、6.0以上でMVP級。"/></div><div className="font-black text-blue-600 text-base">{s.war}</div></div>
                   </div>
                 </div>
               )}
@@ -347,7 +350,6 @@ export default function PlayerDetail() {
     </div>
   );
 
-  // 投手成績用アコーディオン
   const renderPitchingAccordion = () => (
     <div key="pitching" className="mb-12">
       <div className="flex justify-between items-center mb-4 px-2">
@@ -358,7 +360,6 @@ export default function PlayerDetail() {
           const s = calcSaber(row, 'P') as any;
           const ip = formatIP(row.p.投球回);
           
-          // ★新指標の計算
           const walks = toF(row.p.与四球 || row.p.四球);
           const hits = toF(row.p.被安打 || row.p.安打);
           const so = toF(row.p.三振 || row.p.奪三振);
@@ -396,7 +397,6 @@ export default function PlayerDetail() {
               
               {isOpen && (
                 <div className="p-4 md:p-6 bg-slate-50 border-t-[3px] border-slate-100 rounded-b-xl">
-                  {/* ★項目が増えたため、レスポンシブなグリッドを細かく調整 */}
                   <div className="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-y-6 gap-x-2 text-center text-xs">
                     <div><div className="text-[10px] font-black text-slate-400 mb-1">先発</div><div className="font-bold text-slate-800 text-sm">{row.p.先発 || 0}</div></div>
                     <div><div className="text-[10px] font-black text-slate-400 mb-1">完投</div><div className="font-bold text-slate-800 text-sm">{row.p.完投 || 0}</div></div>
@@ -409,15 +409,14 @@ export default function PlayerDetail() {
                     <div><div className="text-[10px] font-black text-slate-400 mb-1">失点</div><div className="font-bold text-slate-800 text-sm">{row.p.失点 || 0}</div></div>
                     <div><div className="text-[10px] font-black text-slate-400 mb-1">自責点</div><div className="font-bold text-slate-800 text-sm">{row.p.自責点 || 0}</div></div>
                     
-                    {/* ★新指標＆インフォメーションアイコン */}
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">K/9<HelpIcon id={`k9_${i}`} text="9イニングあたりの奪三振数"/></div><div className="font-bold text-slate-800 text-sm">{(so*9/ip).toFixed(2)}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">BB/9<HelpIcon id={`bb9_${i}`} text="9イニングあたりの与四球数"/></div><div className="font-bold text-slate-800 text-sm">{(walks*9/ip).toFixed(2)}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">WHIP<HelpIcon id={`whip_${i}`} text="1イニングあたりに何人の走者を出したか。1.20未満で優秀"/></div><div className="font-bold text-slate-800 text-sm">{whip}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">K/BB<HelpIcon id={`kbb_${i}`} text="奪三振と与四球の比率。投手の制球力と支配力を示す"/></div><div className="font-bold text-slate-800 text-sm">{kbb}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">K-BB%<HelpIcon id={`kbbpct_${i}`} text="全打者に対する (奪三振-与四球) の割合。運に左右されない真の支配力"/></div><div className="font-bold text-slate-800 text-sm">{kbbPct}</div></div>
+                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">K/9<HelpIcon id={`k9_${i}`} text="9イニングあたりの奪三振数" benchmark="7.0で平均的、9.0以上で高い奪三振能力。"/></div><div className="font-bold text-slate-800 text-sm">{(so*9/ip).toFixed(2)}</div></div>
+                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">BB/9<HelpIcon id={`bb9_${i}`} text="9イニングあたりの与四球数" benchmark="3.0以下で優秀、2.0以下で抜群の制球力。"/></div><div className="font-bold text-slate-800 text-sm">{(walks*9/ip).toFixed(2)}</div></div>
+                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">WHIP<HelpIcon id={`whip_${i}`} text="1イニングあたりに何人の走者を出したか。" benchmark="1.20未満で優秀、1.00未満で球界を代表するエース。"/></div><div className="font-bold text-slate-800 text-sm">{whip}</div></div>
+                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">K/BB<HelpIcon id={`kbb_${i}`} text="奪三振と与四球の比率。投手の制球力と支配力を示す" benchmark="3.5以上で優秀、5.0以上は圧倒的な支配力。"/></div><div className="font-bold text-slate-800 text-sm">{kbb}</div></div>
+                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">K-BB%<HelpIcon id={`kbbpct_${i}`} text="全打者に対する (奪三振-与四球) の割合。運に左右されない真の支配力" benchmark="15%で優秀、20%以上は球界を代表する圧倒的なエース。"/></div><div className="font-bold text-slate-800 text-sm">{kbbPct}</div></div>
                     
-                    <div className="bg-white rounded-lg border border-orange-100 py-1 shadow-sm"><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">FIP<HelpIcon id={`fip_p_${i}`} text="被本塁打・与四死球・奪三振のみで評価した、運に左右されない防御率"/></div><div className="font-black text-orange-600 text-base">{s.fip}</div></div>
-                    <div className="bg-white rounded-lg border border-blue-100 py-1 shadow-sm"><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">WAR<HelpIcon id={`war_p_${i}`} text="投球イニングと失点率から、控え投手に比べてチームに何勝分上乗せしたか"/></div><div className="font-black text-blue-600 text-base">{s.war}</div></div>
+                    <div className="bg-white rounded-lg border border-orange-100 py-1 shadow-sm"><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">FIP<HelpIcon id={`fip_p_${i}`} text="被本塁打・与四死球・奪三振のみで評価した、運に左右されない防御率" benchmark="3.50で優秀、2.00台でエース、1.00台は歴史的。"/></div><div className="font-black text-orange-600 text-base">{s.fip}</div></div>
+                    <div className="bg-white rounded-lg border border-blue-100 py-1 shadow-sm"><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">WAR<HelpIcon id={`war_p_${i}`} text="投球イニングと失点率から、控え投手に比べてチームに何勝分上乗せしたか" benchmark="2.0でローテ定着、4.0でエース級、6.0以上で沢村賞級。"/></div><div className="font-black text-blue-600 text-base">{s.war}</div></div>
                   </div>
                 </div>
               )}
@@ -459,15 +458,17 @@ export default function PlayerDetail() {
           </div>
           <div className="grid grid-cols-2 gap-4 mt-4 text-center">
             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-              <span className="text-[10px] font-black text-slate-400 block mb-2 uppercase">{player.position_detail === '投手' ? 'FIP' : 'wRC+'} <HelpIcon id="h1" text="リーグ平均を100とした創出力指標"/></span>
-              <div className={rankBadge(player.position_detail === '投手' ? getRank(toF(pSaber.fipVal), 'FIP') : getRank(toF(bSaber.wrcPlusVal), 'wRC+'))}>RANK</div>
-              <p className="text-slate-900 text-3xl font-black mt-2">{player.position_detail === '投手' ? pSaber.fip : bSaber.wrcPlus}</p>
+              {/* ★修正: 投野で説明文を出し分ける */}
+              <span className="text-[10px] font-black text-slate-400 block mb-2 uppercase">{isPitcher ? 'FIP' : 'wRC+'} <HelpIcon id="h1" text={isPitcher ? "被本塁打・与四死球・奪三振のみで評価した、運に左右されない防御率" : "球場や時代背景を補正し、打者が平均の何倍の得点を生み出したかを示す傑出度。"} benchmark={isPitcher ? "3.50で優秀な先発、2.00台でエース。" : "100が平均、120で優秀、140以上はMVP級の活躍。"}/></span>
+              <div className={rankBadge(isPitcher ? getRank(toF(pSaber.fipVal), 'FIP') : getRank(toF(bSaber.wrcPlusVal), 'wRC+'))}>RANK</div>
+              <p className="text-slate-900 text-3xl font-black mt-2">{isPitcher ? pSaber.fip : bSaber.wrcPlus}</p>
             </div>
             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-              <span className="text-[10px] font-black text-slate-400 block mb-2 uppercase">{player.position_detail === '投手' ? '奪三振' : 'OPS'} <HelpIcon id="h2" text="出塁率+長打率。得点相関が高い指標"/></span>
+              {/* ★修正: 投野で説明文を出し分ける */}
+              <span className="text-[10px] font-black text-slate-400 block mb-2 uppercase">{isPitcher ? '奪三振' : 'OPS'} <HelpIcon id="h2" text={isPitcher ? "投手が奪った三振の総数。圧倒的な投球能力を示す。" : "出塁率と長打率を足し合わせた、総合的な攻撃力を示す指標。"} benchmark={isPitcher ? "先発でシーズン100〜150個、200個でタイトル級。" : ".750で平均以上、.800で優秀、.900以上は球界を代表する強打者。"}/></span>
               <div className={rankBadge('S')}>STATUS</div>
               <p className="text-slate-900 text-3xl font-black mt-2">
-                {player.position_detail === '投手' ? (latestP.三振 || latestP.奪三振 || 0) : dotFormat(toF(latestB.出塁率) + toF(latestB.長打率) || toF(latestB.OPS))}
+                {isPitcher ? (latestP.三振 || latestP.奪三振 || 0) : dotFormat(toF(latestB.出塁率) + toF(latestB.長打率) || toF(latestB.OPS))}
               </p>
             </div>
           </div>
