@@ -4,9 +4,12 @@ import requests
 from bs4 import BeautifulSoup
 from supabase import create_client, Client
 import unicodedata
-from dotenv import load_dotenv
-
-load_dotenv('.env.local')
+try:
+    from dotenv import load_dotenv
+    load_dotenv('.env.local')
+except ImportError:
+    # GitHub Actionsなど、dotenvがインストールされていない環境ではここを通る
+    pass
 
 # --- 設定 ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
