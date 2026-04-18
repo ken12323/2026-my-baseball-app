@@ -31,7 +31,6 @@ interface PlayerRank {
   war: number;
 }
 
-// ★ 修正箇所：全角スペース（阪　神、読　売など）を除去してから判定する
 const getLeague = (teamName: string): League | 'Other' => {
   const cleanTeam = teamName.replace(/[\s　]+/g, '');
   const central = ['広島', 'カープ', '読売', '巨人', 'ジャイアンツ', '阪神', 'タイガース', 'DeNA', 'ベイスターズ', '中日', 'ドラゴンズ', 'ヤクルト', 'スワローズ'];
@@ -127,11 +126,13 @@ function Leaderboard() {
             : toF(stat['投手WAR'] || stat.war || stat.WAR);
 
           const is_rookie = p?.draft_year && String(p.draft_year).includes('2025');
-
           const currentLeague = getLeague(team);
 
           if (role === 'hitter') {
             const pa = toF(stat.打席);
+            // ★修正：打席が0（試合に出ていない）選手は完全に除外
+            if (pa === 0) return;
+
             is_qualified = pa >= Math.floor(teamGameCount * 3.1);
             is_half_qualified = pa >= Math.floor((teamGameCount * 3.1) / 2);
 
@@ -163,6 +164,8 @@ function Leaderboard() {
           } else {
             const ipStr = String(stat.投球回 || '0');
             const ip = formatIP(ipStr);
+            // ★修正：投球回が0（登板していない）選手は完全に除外
+            if (ip === 0) return;
 
             is_qualified = ip >= teamGameCount;
             is_half_qualified = ip >= (teamGameCount / 2);
