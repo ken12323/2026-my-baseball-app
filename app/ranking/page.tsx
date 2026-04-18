@@ -9,7 +9,6 @@ import { useSearchParams, useRouter } from 'next/navigation';
 type League = 'ALL' | 'Central' | 'Pacific';
 type Role = 'hitter' | 'pitcher';
 type FilterType = 'qualified' | 'half' | 'all';
-// ★ 修正：一塁・二塁・三塁・遊撃を統合して 'infielder'（内野手）に変更
 type PosFilter = 'all' | 'starter' | 'reliever' | 'catcher' | 'infielder' | 'outfielder';
 type BatThrowFilter = 'all' | 'right' | 'left' | 'both';
 type ProfFilter = 'all' | 'rookie' | 'u25' | 'tatakiage';
@@ -46,7 +45,7 @@ const CENTRAL_TEAMS = ['阪神', '広島', 'DeNA', '巨人', 'ヤクルト', '�
 const PACIFIC_TEAMS = ['オリックス', 'ロッテ', 'ソフトバンク', '楽天', '西武', '日本ハム'];
 
 const getTeamInfo = (teamName: string): { league: League | 'Other', shortName: string } => {
-  const cleanTeam = teamName.replace(/[\s　]+/g, '');
+  const cleanTeam = String(teamName).replace(/[\s　]+/g, '');
   if (cleanTeam.includes('阪神') || cleanTeam.includes('タイガース')) return { league: 'Central', shortName: '阪神' };
   if (cleanTeam.includes('広島') || cleanTeam.includes('カープ')) return { league: 'Central', shortName: '広島' };
   if (cleanTeam.includes('DeNA') || cleanTeam.includes('ベイスターズ')) return { league: 'Central', shortName: 'DeNA' };
@@ -76,8 +75,10 @@ const formatIP = (ipStr: any): number => {
   return int + (frac === 1 ? 0.333 : frac === 2 ? 0.666 : 0);
 };
 
-const parseSalary = (str: string | undefined): number => {
-  if (!str) return 0;
+// ★ 修正：値が数字でも文字でもクラッシュしないようにStringでキャスト
+const parseSalary = (val: any): number => {
+  if (!val) return 0;
+  const str = String(val);
   let total = 0;
   const oku = str.match(/([0-9.]+)億/);
   if (oku) total += parseFloat(oku[1]) * 10000;
@@ -86,7 +87,7 @@ const parseSalary = (str: string | undefined): number => {
   return total;
 };
 
-const calculateAge = (birthDateStr: string | undefined | null) => {
+const calculateAge = (birthDateStr: any) => {
   if (!birthDateStr) return null;
   const match = String(birthDateStr).match(/(\d{4})/);
   if (!match) return null;
@@ -168,7 +169,7 @@ function Leaderboard() {
         let globalMaxGames = 143; 
         if (gamesData) {
           gamesData.forEach((row: any) => {
-            const t = row.所属球団;
+            const t = String(row.所属球団);
             const g = parseInt(row.試合) || 0;
             if (!teamGames[t] || g > teamGames[t]) teamGames[t] = g;
           });
@@ -180,10 +181,13 @@ function Leaderboard() {
 
         statsData.forEach(s => {
           const stat = s as any;
-          const p = playersData.find(player => String(player.player_id).padStart(8, '0') === String(stat.player_id).padStart(8, '0'));
-          const team = stat.所属球団 || p?.team_name || '不明';
-          const pos = p?.position_detail || (role === 'hitter' ? '内野手' : '投手');
-          const throwsBats = p?.throws_bats || '';
+          const safeId = String(stat.player_id).padStart(8, '0');
+          const p = playersData.find(player => String(player.player_id).padStart(8, '0') === safeId);
+          const team = String(stat.所属球団 || p?.team_name || '不明');
+          
+          // ★ 修正：クラッシュ防止のためStringでキャスト
+          const pos = String(p?.position_detail || (role === 'hitter' ? '内野手' : '投手'));
+          const throwsBats = String(p?.throws_bats || '');
 
           if (role === 'hitter' && pos.includes('投手')) return;
 
@@ -198,7 +202,6 @@ function Leaderboard() {
             }
           }
 
-          // ★ 修正：野手ポジションの判定を「捕手・内野手・外野手」に変更
           if (role === 'hitter') {
             if (posFilter === 'catcher' && !pos.includes('捕手')) return;
             if (posFilter === 'infielder' && !pos.includes('内野手') && !pos.includes('一塁') && !pos.includes('二塁') && !pos.includes('三塁') && !pos.includes('遊撃')) return;
@@ -207,8 +210,11 @@ function Leaderboard() {
 
           const age = calculateAge(p?.birth_date || p?.birthday);
           const isRookie = p?.draft_year && String(p.draft_year).includes('2025');
+          
+          // ★ 修正：クラッシュ防止のためStringでキャストしてからreplace
+          const draftRankStr = String(p?.draft_rank || '');
+          const isTatakiage = p?.is_developmental || (draftRankStr && parseInt(draftRankStr.replace(/[^0-9]/g, '')) >= 5);
           const isU25 = age !== null && age <= 25;
-          const isTatakiage = p?.is_developmental || (p?.draft_rank && parseInt(p.draft_rank.replace(/[^0-9]/g, '')) >= 5);
 
           if (profFilter === 'rookie' && !isRookie) return;
           if (profFilter === 'u25' && !isU25) return;
@@ -252,10 +258,10 @@ function Leaderboard() {
             const romanVal = isopVal + bbPct - avg; 
 
             processed.push({
-              player_id: String(stat.player_id).padStart(8, '0'),
-              player_name: stat.名前 || p?.player_name || '不明',
+              player_id: safeId,
+              player_name: String(stat.名前 || p?.player_name || '不明'),
               team_name: team, short_team: currentShortTeam, league: currentLeague, position: pos,
-              throws_bats: throwsBats, age, salary_estimated: p?.salary_estimated || '不明',
+              throws_bats: throwsBats, age, salary_estimated: String(p?.salary_estimated || '不明'),
               war: warVal, cospa: cospaVal, roman: romanVal,
               pa, hits, double: dbl, triple: tpl, hr, rbi: toF(stat.打点), sb: toF(stat.盗塁),
               bb, hbp, so_bat: toF(stat.三振), avg, obp: toF(stat.出塁率), slg, ops: toF(stat.OPS || (toF(stat.出塁率) + slg)),
@@ -289,10 +295,10 @@ function Leaderboard() {
             const unluckVal = eraVal - fipVal; 
 
             processed.push({
-              player_id: String(stat.player_id).padStart(8, '0'),
-              player_name: stat.名前 || p?.player_name || '不明',
+              player_id: safeId,
+              player_name: String(stat.名前 || p?.player_name || '不明'),
               team_name: team, short_team: currentShortTeam, league: currentLeague, position: pos,
-              throws_bats: throwsBats, age, salary_estimated: p?.salary_estimated || '不明',
+              throws_bats: throwsBats, age, salary_estimated: String(p?.salary_estimated || '不明'),
               war: warVal, cospa: cospaVal, unluck: unluckVal,
               games, starts, ip_str: ipStr, wins: toF(stat.勝利), losses: toF(stat.敗北),
               sv: toF(stat.セーブ), hp: toF(stat.ホールドポイント || stat.HP), hits_allowed: hitsAllowed,
@@ -318,6 +324,8 @@ function Leaderboard() {
         });
 
         setPlayers(sorted.slice(0, 100)); 
+      } catch (err) {
+        console.error('Data parsing error:', err);
       } finally {
         setLoading(false);
       }
@@ -390,7 +398,6 @@ function Leaderboard() {
             ))}
           </div>
 
-          {/* ★ 修正：野手は「捕手・内野手・外野手」に変更 */}
           <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
             <button onClick={() => updateParam('pos', 'all')} className={`whitespace-nowrap px-4 py-1.5 rounded-full text-[10px] font-black transition-all ${posFilter === 'all' ? 'bg-slate-800 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200'}`}>
               全ポジション
