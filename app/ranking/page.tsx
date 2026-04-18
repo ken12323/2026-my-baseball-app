@@ -75,7 +75,6 @@ const formatIP = (ipStr: any): number => {
   return int + (frac === 1 ? 0.333 : frac === 2 ? 0.666 : 0);
 };
 
-// ★ 修正：値が数字でも文字でもクラッシュしないようにStringでキャスト
 const parseSalary = (val: any): number => {
   if (!val) return 0;
   const str = String(val);
@@ -94,15 +93,16 @@ const calculateAge = (birthDateStr: any) => {
   return 2026 - parseInt(match[1], 10);
 };
 
+// ★修正：指標の説明・計算式を「当サイトの簡易仕様」である旨を明記
 const METRIC_INFO: Record<string, { desc: string, calc: string, benchmark: string }> = {
-  war: { desc: '打撃・走塁・守備・投球を総合評価し、控え選手に比べてチームに何勝分上乗せしたかを示す究極の指標。', calc: '各種指標の積み上げによる総合貢献度', benchmark: '2.0でレギュラー/ローテ定着、4.0でオールスター級、6.0以上でMVP/沢村賞級。' },
+  war: { desc: '打撃・走塁・守備・投球を総合評価し、控え選手に比べてチームに何勝分上乗せしたかを示す指標。', calc: '当サイト独自の簡易算出（※本来必要なパークファクターや詳細な守備指標を簡略化し、基礎スタッツから推計した代替値を使用しています）', benchmark: '2.0でレギュラー定着、4.0でオールスター級、6.0以上でMVP級。' },
   avg: { desc: '打数が安打になる確率。確実性を示す伝統的な指標。', calc: '安打 ÷ 打数', benchmark: '.250が平均的、.280で好打者、.300（3割）で一流。' },
   hr: { desc: '打者がホームランを打った総数。', calc: 'フェンスオーバー、またはランニング本塁打。', benchmark: '20本で強打者、30本以上でタイトル争いレベル。' },
   hits: { desc: '打者がヒットを打った総数。', calc: '単打 + 二塁打 + 三塁打 + 本塁打', benchmark: 'レギュラーで100〜150安打。タイトル争いは160安打以上。' },
   rbi: { desc: '打者の打撃によってチームに入った得点。', calc: '安打、犠牲フライ等による得点の合計', benchmark: '80打点で優秀、100打点でリーグトップクラス。' },
   ops: { desc: '出塁率と長打率を足し合わせた、総合的な攻撃力を示す指標。', calc: '出塁率 + 長打率', benchmark: '.750で平均以上、.800で優秀、.900以上は球界を代表する強打者。' },
-  wrc_plus: { desc: '球場の広さや時代背景を補正し、打者が平均の何倍の得点を生み出したかを示す傑出度。', calc: 'リーグ平均を100としたパーセンテージ', benchmark: '100が平均、120で優秀、140以上はMVP級の活躍。' },
-  woba: { desc: '1打席あたりにどれだけ得点産出に貢献したかを表す指標。', calc: '各イベントに得点価値の重みを掛けて算出', benchmark: '.330前後が平均、.400超えで一流打者。' },
+  wrc_plus: { desc: '打者が平均の何倍の得点を生み出したかを示す傑出度。', calc: '当サイト独自の簡易算出（※本来必要なパークファクター補正等を省略し、リーグ平均をベースに算出した簡易版を使用しています）', benchmark: '100が平均、120で優秀、140以上はMVP級の活躍。' },
+  woba: { desc: '1打席あたりにどれだけ得点産出に貢献したかを表す指標。', calc: '各種イベントに得点価値の重みを掛けて算出（※当サイト独自の固定係数を用いて簡易算出しています）', benchmark: '.330前後が平均、.400超えで一流打者。' },
   isop: { desc: '打率を含まない純粋な長打の割合。長打力を示す。', calc: '長打率 - 打率', benchmark: '.150で平均的、.200以上で強打者、.250以上は長距離砲。' },
   era: { desc: '投手が9イニング（1試合）投げた場合に失う自責点の平均。', calc: '(自責点 × 9) ÷ 投球回', benchmark: '3.50で優秀な先発、2.00台でエース、1.00台は歴史的。' },
   so_pitch: { desc: '投手が奪った三振の総数。圧倒的な投球能力を示す。', calc: '奪三振数', benchmark: '先発でシーズン100〜150個、200個でタイトル級。' },
@@ -113,10 +113,16 @@ const METRIC_INFO: Record<string, { desc: string, calc: string, benchmark: strin
   k9: { desc: '9イニング（1試合）あたりに奪う三振の数。', calc: '(奪三振 × 9) ÷ 投球回', benchmark: '7.0で平均的、9.0以上で高い奪三振能力。' },
   bb9: { desc: '9イニング（1試合）あたりに与える四球の数。', calc: '(与四球 × 9) ÷ 投球回', benchmark: '3.0以下で優秀、2.0以下で抜群の制球力。' },
   whip: { desc: '1イニングあたりに何人の走者を出したか。', calc: '(与四球 + 被安打) ÷ 投球回', benchmark: '1.20未満で優秀、1.00未満で球界を代表するエース。' },
-  fip: { desc: '被本塁打・与四死球・奪三振のみで評価した、運に左右されない防御率。', calc: '(13×被本塁打 + 3×(与四球+与死球) - 2×奪三振) ÷ 投球回 + リーグ定数', benchmark: '3.50で優秀、2.00台でエース、1.00台は歴史的。' },
+  fip: { desc: '被本塁打・与四死球・奪三振のみで評価した、運に左右されない防御率。', calc: '(13×被本塁打 + 3×(与四球+与死球) - 2×奪三振) ÷ 投球回 + リーグ定数（※定数は概算値を使用）', benchmark: '3.50で優秀、2.00台でエース、1.00台は歴史的。' },
   cospa: { desc: '1億円あたりどれだけチームの勝利（WAR）に貢献しているかを示すコストパフォーマンス。', calc: 'WAR ÷ (推定年俸 ÷ 1億)', benchmark: '若手や育成出身が上位に来やすく、1.0を超えれば超優良コスパ。' },
   unluck: { desc: '防御率からFIPを引いた値。実際の失点より投球内容が優れている（不運である）度合いを示す。', calc: '防御率 - FIP', benchmark: 'プラスが大きいほど不運（バックの守備難や運の悪さ）、マイナスが大きいほど幸運。' },
   roman: { desc: '打率は低いが、純粋な長打力（ISOp）と四球を選ぶ力に長けた「ロマン砲」度合いを示す当サイト独自指標。', calc: 'ISOp + 四球率 - 打率', benchmark: '数値が高いほど「当たれば飛ぶ＆選球眼が良いが確実性が低い」ロマン溢れる打者。' }
+};
+
+const PROF_INFO: Record<string, string> = {
+  rookie: '💡 2025年ドラフトで入団した新人選手のみを表示しています',
+  u25: '💡 2026年時点で25歳以下の若手選手のみを表示しています',
+  tatakiage: '💡 ドラフト5位以下、または育成枠でプロ入りした選手のみを表示しています'
 };
 
 // --- 2. メインコンポーネント ---
@@ -185,7 +191,6 @@ function Leaderboard() {
           const p = playersData.find(player => String(player.player_id).padStart(8, '0') === safeId);
           const team = String(stat.所属球団 || p?.team_name || '不明');
           
-          // ★ 修正：クラッシュ防止のためStringでキャスト
           const pos = String(p?.position_detail || (role === 'hitter' ? '内野手' : '投手'));
           const throwsBats = String(p?.throws_bats || '');
 
@@ -211,7 +216,6 @@ function Leaderboard() {
           const age = calculateAge(p?.birth_date || p?.birthday);
           const isRookie = p?.draft_year && String(p.draft_year).includes('2025');
           
-          // ★ 修正：クラッシュ防止のためStringでキャストしてからreplace
           const draftRankStr = String(p?.draft_rank || '');
           const isTatakiage = p?.is_developmental || (draftRankStr && parseInt(draftRankStr.replace(/[^0-9]/g, '')) >= 5);
           const isU25 = age !== null && age <= 25;
@@ -447,6 +451,12 @@ function Leaderboard() {
           </div>
         </div>
       </div>
+
+      {profFilter !== 'all' && PROF_INFO[profFilter] && (
+        <div className="mb-4 bg-blue-50 border border-blue-100 text-blue-800 text-[11px] font-bold px-4 py-3 rounded-xl flex items-center gap-2 shadow-sm">
+          {PROF_INFO[profFilter]}
+        </div>
+      )}
 
       {METRIC_INFO[sortKey] && (
         <div className="mb-6 bg-slate-50 border border-slate-200 rounded-2xl p-5 shadow-sm relative overflow-hidden">
