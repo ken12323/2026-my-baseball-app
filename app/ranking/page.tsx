@@ -53,6 +53,32 @@ const formatIP = (ipStr: any): number => {
   return int + (frac === 1 ? 0.333 : frac === 2 ? 0.666 : 0);
 };
 
+// ★追加：各指標の解説データ辞書
+const METRIC_INFO: Record<string, { desc: string, calc: string, benchmark: string }> = {
+  // 打撃指標
+  war: { desc: '打撃・走塁・守備・投球を総合評価し、控え選手に比べてチームに何勝分上乗せしたかを示す究極の指標。', calc: '各種指標の積み上げによる総合貢献度', benchmark: '2.0でレギュラー/ローテ定着、4.0でオールスター級、6.0以上でMVP/沢村賞級。' },
+  avg: { desc: '打数が安打になる確率。確実性を示す伝統的な指標。', calc: '安打 ÷ 打数', benchmark: '.250が平均的、.280で好打者、.300（3割）で一流。' },
+  hr: { desc: '打者がホームランを打った総数。', calc: 'フェンスオーバー、またはランニング本塁打。', benchmark: '20本で強打者、30本以上でタイトル争いレベル。' },
+  hits: { desc: '打者がヒットを打った総数。', calc: '単打 + 二塁打 + 三塁打 + 本塁打', benchmark: 'レギュラーで100〜150安打。タイトル争いは160安打以上。' },
+  rbi: { desc: '打者の打撃によってチームに入った得点。', calc: '安打、犠牲フライ等による得点の合計', benchmark: '80打点で優秀、100打点でリーグトップクラス。' },
+  ops: { desc: '出塁率と長打率を足し合わせた、総合的な攻撃力を示す指標。', calc: '出塁率 + 長打率', benchmark: '.750で平均以上、.800で優秀、.900以上は球界を代表する強打者。' },
+  wrc_plus: { desc: '球場の広さや時代背景を補正し、打者が平均の何倍の得点を生み出したかを示す傑出度。', calc: 'リーグ平均を100としたパーセンテージ', benchmark: '100が平均、120で優秀、140以上はMVP級の活躍。' },
+  woba: { desc: '1打席あたりにどれだけ得点産出に貢献したかを表す指標。', calc: '各イベント（四死球、単打、長打など）に得点価値の重みを掛けて算出', benchmark: '.330前後が平均、.400超えで一流打者。' },
+  isop: { desc: '打率を含まない純粋な長打の割合。長打力を示す。', calc: '長打率 - 打率', benchmark: '.150で平均的、.200以上で強打者、.250以上は長距離砲。' },
+  
+  // 投手指標
+  era: { desc: '投手が9イニング（1試合）投げた場合に失う自責点の平均。', calc: '(自責点 × 9) ÷ 投球回', benchmark: '3.50で優秀な先発、2.00台でエース、1.00台は歴史的。' },
+  so_pitch: { desc: '投手が奪った三振の総数。圧倒的な投球能力を示す。', calc: '奪三振数', benchmark: '先発でシーズン100〜150個、200個でタイトル級。' },
+  wins: { desc: '投手に記録された勝利数。', calc: 'リードした状態で規定回を投げ終え、勝利した場合等', benchmark: '10勝で一人前の先発、15勝で最多勝争い。' },
+  sv: { desc: '僅差のリードを守り切って試合を終わらせた抑え投手の記録。', calc: 'セーブ条件を満たして登板し、リードを守り切る', benchmark: '20Sで優秀な守護神、30S以上でセーブ王争い。' },
+  hp: { desc: 'セーブが付かない場面でリードを守った中継ぎ投手の評価指標。', calc: 'ホールド数 + 救援勝利数', benchmark: '20HPで優秀なセットアッパー、30HP以上でタイトル争い。' },
+  k_bb_pct: { desc: '全打者に対する (奪三振-与四球) の割合。運に左右されない真の支配力。', calc: '((奪三振 - 与四球) ÷ 打者) × 100', benchmark: '15%で優秀、20%以上は球界を代表する圧倒的なエース。' },
+  k9: { desc: '9イニング（1試合）あたりに奪う三振の数。', calc: '(奪三振 × 9) ÷ 投球回', benchmark: '7.0で平均的、9.0以上で高い奪三振能力。' },
+  bb9: { desc: '9イニング（1試合）あたりに与える四球の数。', calc: '(与四球 × 9) ÷ 投球回', benchmark: '3.0以下で優秀、2.0以下で抜群の制球力。' },
+  whip: { desc: '1イニングあたりに何人の走者を出したか。', calc: '(与四球 + 被安打) ÷ 投球回', benchmark: '1.20未満で優秀、1.00未満で球界を代表するエース。' },
+  fip: { desc: '被本塁打・与四死球・奪三振のみで評価した、運に左右されない防御率。', calc: '(13×被本塁打 + 3×(与四球+与死球) - 2×奪三振) ÷ 投球回 + リーグ定数', benchmark: '3.50で優秀、2.00台でエース、1.00台は歴史的。' }
+};
+
 // --- 2. メインコンポーネント ---
 function Leaderboard() {
   const searchParams = useSearchParams();
@@ -130,7 +156,6 @@ function Leaderboard() {
 
           if (role === 'hitter') {
             const pa = toF(stat.打席);
-            // ★修正：打席が0（試合に出ていない）選手は完全に除外
             if (pa === 0) return;
 
             is_qualified = pa >= Math.floor(teamGameCount * 3.1);
@@ -164,7 +189,6 @@ function Leaderboard() {
           } else {
             const ipStr = String(stat.投球回 || '0');
             const ip = formatIP(ipStr);
-            // ★修正：投球回が0（登板していない）選手は完全に除外
             if (ip === 0) return;
 
             is_qualified = ip >= teamGameCount;
@@ -233,6 +257,7 @@ function Leaderboard() {
 
   return (
     <div className="max-w-4xl mx-auto">
+      {/* モード切替グローバルナビ */}
       <div className="flex bg-slate-200 p-1.5 rounded-2xl mb-6 shadow-inner">
         <Link href="/" className="flex-1 text-center py-3.5 rounded-xl text-sm font-black text-slate-500 hover:text-blue-900 transition-all flex items-center justify-center gap-2 hover:bg-slate-100/50">
           <span className="text-lg">🌱</span> ルーツ別
@@ -242,6 +267,7 @@ function Leaderboard() {
         </div>
       </div>
 
+      {/* フィルターセクション */}
       <div className="bg-white rounded-2xl shadow-xl border-t-8 border-orange-500 p-5 mb-6">
         <div className="flex flex-col gap-4">
           
@@ -276,6 +302,28 @@ function Leaderboard() {
         </div>
       </div>
 
+      {/* ★追加：現在選択されている指標の解説ボックス */}
+      {METRIC_INFO[sortKey] && (
+        <div className="mb-6 bg-slate-50 border border-slate-200 rounded-2xl p-5 shadow-sm relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-1.5 h-full bg-orange-400"></div>
+          <h3 className="text-lg font-black text-slate-800 mb-2 pl-2">
+            {activeMetrics.find(m => m.key === sortKey)?.label} <span className="text-xs font-bold text-slate-400 ml-1">とは？</span>
+          </h3>
+          <p className="text-sm text-slate-700 mb-4 pl-2 leading-relaxed">{METRIC_INFO[sortKey].desc}</p>
+          <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-6 text-xs font-medium text-slate-600 pl-2">
+            <div className="flex items-center gap-2">
+              <span className="bg-white border text-slate-400 px-2 py-0.5 rounded text-[10px] font-black">計算</span>
+              <span>{METRIC_INFO[sortKey].calc}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="bg-white border text-slate-400 px-2 py-0.5 rounded text-[10px] font-black">目安</span>
+              <span>{METRIC_INFO[sortKey].benchmark}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ランキングリスト */}
       {loading ? (
         <div className="text-center py-20 text-orange-500 font-black animate-pulse text-xl">NPBデータを解析中...</div>
       ) : players.length === 0 ? (
