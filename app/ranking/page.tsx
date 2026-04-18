@@ -31,13 +31,14 @@ interface PlayerRank {
   war: number;
 }
 
-// ★ 修正箇所：チーム名の略称・表記揺れに完全対応したリーグマップ
+// ★ 修正箇所：全角スペース（阪　神、読　売など）を除去してから判定する
 const getLeague = (teamName: string): League | 'Other' => {
+  const cleanTeam = teamName.replace(/[\s　]+/g, '');
   const central = ['広島', 'カープ', '読売', '巨人', 'ジャイアンツ', '阪神', 'タイガース', 'DeNA', 'ベイスターズ', '中日', 'ドラゴンズ', 'ヤクルト', 'スワローズ'];
   const pacific = ['ソフトバンク', 'ホークス', '日本ハム', 'ファイターズ', 'ロッテ', 'マリーンズ', '楽天', 'イーグルス', 'オリックス', 'バファローズ', '西武', 'ライオンズ'];
   
-  if (central.some(name => teamName.includes(name))) return 'Central';
-  if (pacific.some(name => teamName.includes(name))) return 'Pacific';
+  if (central.some(name => cleanTeam.includes(name))) return 'Central';
+  if (pacific.some(name => cleanTeam.includes(name))) return 'Pacific';
   return 'Other';
 };
 
@@ -127,7 +128,6 @@ function Leaderboard() {
 
           const is_rookie = p?.draft_year && String(p.draft_year).includes('2025');
 
-          // ★ 修正箇所：動的リーグ判定関数を通す
           const currentLeague = getLeague(team);
 
           if (role === 'hitter') {
@@ -196,12 +196,11 @@ function Leaderboard() {
         const sorted = filtered.sort((a, b) => {
           const valA = (a as any)[sortKey] ?? -999;
           const valB = (b as any)[sortKey] ?? -999;
-          // 防御率・FIP・WHIP・BB/9は低い順が上位
           if (['era', 'fip', 'whip', 'bb9'].includes(sortKey)) return valA - valB;
           return valB - valA;
         });
 
-        setPlayers(sorted.slice(0, 100)); // 上位100名
+        setPlayers(sorted.slice(0, 100)); 
       } finally {
         setLoading(false);
       }
@@ -212,7 +211,7 @@ function Leaderboard() {
   const updateParam = (key: string, value: string) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set(key, value);
-    if (key === 'role') params.set('sort', 'war'); // ロール変更時はWARにリセット
+    if (key === 'role') params.set('sort', 'war'); 
     router.push(`/ranking?${params.toString()}`);
   };
 
@@ -231,7 +230,6 @@ function Leaderboard() {
 
   return (
     <div className="max-w-4xl mx-auto">
-      {/* モード切替グローバルナビ */}
       <div className="flex bg-slate-200 p-1.5 rounded-2xl mb-6 shadow-inner">
         <Link href="/" className="flex-1 text-center py-3.5 rounded-xl text-sm font-black text-slate-500 hover:text-blue-900 transition-all flex items-center justify-center gap-2 hover:bg-slate-100/50">
           <span className="text-lg">🌱</span> ルーツ別
@@ -241,7 +239,6 @@ function Leaderboard() {
         </div>
       </div>
 
-      {/* フィルターセクション */}
       <div className="bg-white rounded-2xl shadow-xl border-t-8 border-orange-500 p-5 mb-6">
         <div className="flex flex-col gap-4">
           
@@ -276,7 +273,6 @@ function Leaderboard() {
         </div>
       </div>
 
-      {/* ランキングリスト */}
       {loading ? (
         <div className="text-center py-20 text-orange-500 font-black animate-pulse text-xl">NPBデータを解析中...</div>
       ) : players.length === 0 ? (
@@ -307,7 +303,6 @@ function Leaderboard() {
                 </div>
               </div>
               
-              {/* 情報量MAXのサブスタッツ表示エリア */}
               <div className="mt-3 pt-3 border-t border-slate-50 flex flex-wrap gap-x-3 gap-y-1.5 text-[10px] font-bold text-slate-500">
                 {role === 'hitter' ? (
                   <>
