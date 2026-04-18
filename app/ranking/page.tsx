@@ -31,11 +31,14 @@ interface PlayerRank {
   war: number;
 }
 
-const LEAGUE_MAP: Record<string, string> = {
-  '広島東洋カープ': 'Central', '読売ジャイアンツ': 'Central', '阪神タイガース': 'Central',
-  '横浜DeNAベイスターズ': 'Central', '中日ドラゴンズ': 'Central', '東京ヤクルトスワローズ': 'Central',
-  '福岡ソフトバンクホークス': 'Pacific', '北海道日本ハムファイターズ': 'Pacific', '千葉ロッテマリーンズ': 'Pacific',
-  '東北楽天ゴールデンイーグルス': 'Pacific', 'オリックス・バファローズ': 'Pacific', '埼玉西武ライオンズ': 'Pacific'
+// ★ 修正箇所：チーム名の略称・表記揺れに完全対応したリーグマップ
+const getLeague = (teamName: string): League | 'Other' => {
+  const central = ['広島', 'カープ', '読売', '巨人', 'ジャイアンツ', '阪神', 'タイガース', 'DeNA', 'ベイスターズ', '中日', 'ドラゴンズ', 'ヤクルト', 'スワローズ'];
+  const pacific = ['ソフトバンク', 'ホークス', '日本ハム', 'ファイターズ', 'ロッテ', 'マリーンズ', '楽天', 'イーグルス', 'オリックス', 'バファローズ', '西武', 'ライオンズ'];
+  
+  if (central.some(name => teamName.includes(name))) return 'Central';
+  if (pacific.some(name => teamName.includes(name))) return 'Pacific';
+  return 'Other';
 };
 
 const toF = (val: any): number => {
@@ -87,15 +90,13 @@ function Leaderboard() {
         const [{ data: statsData }, { data: playersData }, { data: gamesData }] = await Promise.all([
           supabase.from(table).select('*').eq('年度', 2026),
           supabase.from('players').select('*'),
-          // 規定打席/投球回の計算用に、チームごとの最大試合数を取得
           supabase.from('batting_stats').select('所属球団, 試合').eq('年度', 2026)
         ]);
 
         if (!statsData || !playersData) return;
 
-        // チームごとの試合数を計算
         const teamGames: Record<string, number> = {};
-        let globalMaxGames = 143; // デフォルト
+        let globalMaxGames = 143; 
         if (gamesData) {
           gamesData.forEach((row: any) => {
             const t = row.所属球団;
@@ -114,7 +115,6 @@ function Leaderboard() {
           const team = stat.所属球団 || p?.team_name || '不明';
           const pos = p?.position_detail || (role === 'hitter' ? '内野手' : '投手');
 
-          // ★ご要望機能：野手ランキングの場合、ポジションが「投手」の選手は除外する
           if (role === 'hitter' && pos.includes('投手')) return;
 
           const teamGameCount = teamGames[team] || globalMaxGames;
@@ -125,16 +125,16 @@ function Leaderboard() {
             ? toF(stat['野手WAR'] || stat.war || stat.WAR) 
             : toF(stat['投手WAR'] || stat.war || stat.WAR);
 
-          // ★ご要望機能：ルーキー判定 (2026年シーズンのルーキー＝2025年ドラフト)
           const is_rookie = p?.draft_year && String(p.draft_year).includes('2025');
+
+          // ★ 修正箇所：動的リーグ判定関数を通す
+          const currentLeague = getLeague(team);
 
           if (role === 'hitter') {
             const pa = toF(stat.打席);
-            // 規定打席 ＝ チーム試合数 × 3.1
             is_qualified = pa >= Math.floor(teamGameCount * 3.1);
             is_half_qualified = pa >= Math.floor((teamGameCount * 3.1) / 2);
 
-            // フィルター適用
             if (filterType === 'qualified' && !is_qualified) return;
             if (filterType === 'half' && !is_half_qualified) return;
             if (filterType === 'rookie' && !is_rookie) return;
@@ -154,7 +154,7 @@ function Leaderboard() {
             processed.push({
               player_id: String(stat.player_id).padStart(8, '0'),
               player_name: stat.名前 || p?.player_name || '不明',
-              team_name: team, league: LEAGUE_MAP[team] || 'Other', position: pos,
+              team_name: team, league: currentLeague, position: pos,
               war: warVal, pa, hits, double: dbl, triple: tpl, hr, rbi: toF(stat.打点), sb: toF(stat.盗塁),
               bb, hbp, so_bat: toF(stat.三振), avg, obp: toF(stat.出塁率), slg, ops: toF(stat.OPS || (toF(stat.出塁率) + slg)),
               woba: wobaVal, isop: isopVal, wrc_plus: toF(stat['wRC+'])
@@ -164,11 +164,9 @@ function Leaderboard() {
             const ipStr = String(stat.投球回 || '0');
             const ip = formatIP(ipStr);
 
-            // 規定投球回 ＝ チーム試合数 × 1.0
             is_qualified = ip >= teamGameCount;
             is_half_qualified = ip >= (teamGameCount / 2);
 
-            // フィルター適用
             if (filterType === 'qualified' && !is_qualified) return;
             if (filterType === 'half' && !is_half_qualified) return;
             if (filterType === 'rookie' && !is_rookie) return;
@@ -182,7 +180,7 @@ function Leaderboard() {
             processed.push({
               player_id: String(stat.player_id).padStart(8, '0'),
               player_name: stat.名前 || p?.player_name || '不明',
-              team_name: team, league: LEAGUE_MAP[team] || 'Other', position: pos,
+              team_name: team, league: currentLeague, position: pos,
               war: warVal, games: toF(stat.登板), ip_str: ipStr, wins: toF(stat.勝利), losses: toF(stat.敗北),
               sv: toF(stat.セーブ), hp: toF(stat.ホールドポイント || stat.HP), hits_allowed: hitsAllowed,
               bb_allowed: walks, so_pitch: so, runs: toF(stat.失点), er: toF(stat.自責点),
@@ -193,10 +191,8 @@ function Leaderboard() {
           }
         });
 
-        // リーグフィルター適用
         const filtered = league === 'ALL' ? processed : processed.filter(p => p.league === league);
 
-        // ソート適用
         const sorted = filtered.sort((a, b) => {
           const valA = (a as any)[sortKey] ?? -999;
           const valB = (b as any)[sortKey] ?? -999;
@@ -220,7 +216,6 @@ function Leaderboard() {
     router.push(`/ranking?${params.toString()}`);
   };
 
-  // メイン数値フォーマッター
   const formatMainStat = (key: string, value: number) => {
     if (value === undefined || isNaN(value)) return '-';
     if (['avg', 'woba', 'isop'].includes(key)) {
@@ -250,13 +245,11 @@ function Leaderboard() {
       <div className="bg-white rounded-2xl shadow-xl border-t-8 border-orange-500 p-5 mb-6">
         <div className="flex flex-col gap-4">
           
-          {/* 1段目: 野手・投手切り替え */}
           <div className="flex bg-slate-100 p-1 rounded-xl">
             <button onClick={() => updateParam('role', 'hitter')} className={`flex-1 py-2.5 rounded-lg text-xs font-black transition-all ${role === 'hitter' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400'}`}>野手ランキング</button>
             <button onClick={() => updateParam('role', 'pitcher')} className={`flex-1 py-2.5 rounded-lg text-xs font-black transition-all ${role === 'pitcher' ? 'bg-red-600 text-white shadow-md' : 'text-slate-400'}`}>投手ランキング</button>
           </div>
 
-          {/* 2段目: リーグ切り替え */}
           <div className="flex gap-2">
             {(['ALL', 'Central', 'Pacific'] as League[]).map(l => (
               <button key={l} onClick={() => updateParam('league', l)} className={`flex-1 py-2 rounded-lg text-[10px] font-black border-2 transition-all ${league === l ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-100 text-slate-400'}`}>
@@ -265,7 +258,6 @@ function Leaderboard() {
             ))}
           </div>
 
-          {/* ★追加 3段目: 規定・ルーキー絞り込み */}
           <div className="flex gap-2">
             {(['qualified', 'half', 'rookie', 'all'] as FilterType[]).map(f => (
               <button key={f} onClick={() => updateParam('filter', f)} className={`flex-1 py-2 rounded-lg text-[10px] font-black border-2 transition-all ${filterType === f ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-100 text-slate-400 hover:bg-slate-50'}`}>
@@ -274,7 +266,6 @@ function Leaderboard() {
             ))}
           </div>
 
-          {/* 4段目: 指標切り替え（横スクロール対応） */}
           <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
             {activeMetrics.map(m => (
               <button key={m.key} onClick={() => updateParam('sort', m.key)} className={`whitespace-nowrap px-5 py-2 rounded-full text-[10px] font-black transition-all ${sortKey === m.key ? 'bg-orange-500 text-white shadow-lg' : 'bg-slate-50 text-slate-400 border border-slate-100'}`}>
