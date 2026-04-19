@@ -175,7 +175,7 @@ def main():
             b["IsoD"] = round(b["出塁率"] - b.get("打率", 0), 3)
             b["K%"] = round((k / pa) * 100, 1)
             b["BB%"] = round((bb / pa) * 100, 1)
-            b["roman"] = round(b["ISOp"] + (bb / pa) - b.get("打率", 0), 3)
+            b["roman"] = round(b["ISOp"] + (k / pa) - b.get("打率", 0), 3) # ← 「bb」を「k」に変更！
             b["cospa"] = round(b["野手WAR"] / sal_oku, 2) if sal_oku > 0 else 0.0
             
             b["ランク"] = "S" if b["野手WAR"] > 3.0 else "A" if b["野手WAR"] > 1.0 else "B"
