@@ -27,8 +27,9 @@ interface PlayerRank {
   // 打撃
   pa?: number; hits?: number; hr?: number; rbi?: number; sb?: number; bb?: number; so_bat?: number;
   avg?: number; ops?: number; woba?: number; isop?: number; wrc_plus?: number; babip?: number; roman?: number; 
+  obp?: number; slg?: number; // ★ 内訳表示用に追加
   
-  // 投手（★ここに bb9?: number; を復活させました！）
+  // 投手
   games?: number; starts?: number; ip_str?: string; wins?: number; losses?: number; sv?: number; hp?: number;
   so_pitch?: number; era?: number; whip?: number; k9?: number; bb9?: number; k_bb_pct?: number; fip?: number; babip_pitch?: number; unluck?: number; 
   
@@ -110,7 +111,19 @@ const PROF_INFO: Record<string, string> = {
   tatakiage: '💡 ドラフト5位以下、または育成枠でプロ入りした選手のみを表示しています'
 };
 
-// --- 2. メインコンポーネント ---
+export default function RankingPage() {
+  return (
+    <main className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-900">
+      <Suspense fallback={<div className="text-center py-20 font-black">Loading...</div>}>
+        <Leaderboard />
+      </Suspense>
+      <footer className="mt-20 text-center text-slate-400 text-[10px] font-black uppercase tracking-[0.5em] pb-12 italic">
+        © 2026 BASEBALL ROOTS ANALYTICS
+      </footer>
+    </main>
+  );
+}
+
 function Leaderboard() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -242,7 +255,9 @@ function Leaderboard() {
               woba: toF(stat.wOBA), 
               isop: toF(stat.ISOp), 
               wrc_plus: toF(stat['wRC+']),
-              babip: toF(stat.BABIP)
+              babip: toF(stat.BABIP),
+              obp: toF(stat.出塁率),
+              slg: toF(stat.長打率)
             });
 
           } else {
@@ -282,10 +297,12 @@ function Leaderboard() {
               era: toF(stat.防御率), 
               whip: toF(stat.WHIP),
               k9: toF(stat['K/9']), 
-              bb9: toF(stat['BB/9']), // ★ エラーになっていた部分です
+              bb9: toF(stat['BB/9']),
               k_bb_pct: toF(stat['K-BB%']), 
               fip: toF(stat.FIP),
-              babip_pitch: toF(stat.BABIP)
+              babip_pitch: toF(stat.BABIP),
+              hits: toF(stat.安打),
+              hr: toF(stat.本塁打)
             });
           }
         });
@@ -336,6 +353,95 @@ function Leaderboard() {
     if (['era', 'whip', 'k9', 'bb9', 'fip', 'unluck', 'roman', 'cospa'].includes(key)) return value > 90 ? '-.--' : value.toFixed(2);
     if (key === 'war') return value > 0 ? `+${value.toFixed(1)}` : value.toFixed(1);
     return Math.round(value);
+  };
+
+  // ★ 追加：ソートしている指標の内訳をバッジとして返すヘルパー関数
+  const renderSubMetrics = (key: string, p: PlayerRank) => {
+    const renderBadge = (label: string, val: string | number) => (
+      <span className="inline-flex items-center text-[10px] font-bold border border-orange-200 rounded px-1.5 py-0.5 text-orange-700 bg-orange-50 whitespace-nowrap shadow-sm">
+        {label} <span className="font-black ml-1">{val}</span>
+      </span>
+    );
+
+    const formatAvgLocal = (num: number) => {
+      const s = num.toFixed(3);
+      return s.startsWith('0.') ? s.substring(1) : s.startsWith('-0.') ? '-' + s.substring(2) : s;
+    };
+
+    if (key === 'roman') {
+      const kPct = p.pa ? ((p.so_bat || 0) / p.pa * 100).toFixed(1) : '0.0';
+      return (
+        <>
+          {renderBadge('ISOp', formatAvgLocal(p.isop || 0))}
+          {renderBadge('K%', `${kPct}%`)}
+          {renderBadge('打率', formatAvgLocal(p.avg || 0))}
+        </>
+      );
+    }
+    if (key === 'cospa') {
+      return (
+        <>
+          {renderBadge('WAR', p.war > 0 ? `+${p.war.toFixed(1)}` : p.war.toFixed(1))}
+          {renderBadge('年俸', p.salary_estimated || '-')}
+        </>
+      );
+    }
+    if (key === 'ops') {
+      return (
+        <>
+          {renderBadge('出塁率', formatAvgLocal(p.obp || 0))}
+          {renderBadge('長打率', formatAvgLocal(p.slg || 0))}
+        </>
+      );
+    }
+    if (key === 'isop') {
+      return (
+        <>
+          {renderBadge('長打率', formatAvgLocal(p.slg || 0))}
+          {renderBadge('打率', formatAvgLocal(p.avg || 0))}
+        </>
+      );
+    }
+    if (key === 'wrc_plus') {
+      return (
+        <>
+          {renderBadge('wOBA', formatAvgLocal(p.woba || 0))}
+        </>
+      );
+    }
+    if (key === 'unluck') {
+      return (
+        <>
+          {renderBadge('防', (p.era || 0).toFixed(2))}
+          {renderBadge('FIP', (p.fip || 0).toFixed(2))}
+        </>
+      );
+    }
+    if (key === 'k_bb_pct') {
+      return (
+        <>
+          {renderBadge('K/9', (p.k9 || 0).toFixed(2))}
+          {renderBadge('BB/9', (p.bb9 || 0).toFixed(2))}
+        </>
+      );
+    }
+    if (key === 'whip') {
+      return (
+        <>
+          {renderBadge('被安打', p.hits || 0)}
+          {renderBadge('四球', p.bb || 0)}
+        </>
+      );
+    }
+    if (key === 'babip') {
+       return (
+         <>
+           {renderBadge(role === 'hitter' ? '安打' : '被安打', p.hits || 0)}
+           {renderBadge(role === 'hitter' ? '本塁打' : '被本塁打', p.hr || 0)}
+         </>
+       );
+    }
+    return null;
   };
 
   const displayTeams = league === 'Central' ? CENTRAL_TEAMS : league === 'Pacific' ? PACIFIC_TEAMS : [...CENTRAL_TEAMS, ...PACIFIC_TEAMS];
@@ -469,12 +575,23 @@ function Leaderboard() {
 
                 <div className="flex-1 min-w-0">
                   <p className="text-[9px] font-black text-blue-500 uppercase mb-0.5">{p.team_name}</p>
-                  <h2 className="text-lg font-black text-slate-800 group-hover:text-blue-600 transition-colors leading-none mb-1.5">{p.player_name}</h2>
+                  
+                  {/* ★ 変更：名前の横に動的な内訳バッジを表示 */}
+                  <div className="flex items-center flex-wrap gap-x-3 gap-y-1.5 mb-1.5">
+                    <h2 className="text-lg font-black text-slate-800 group-hover:text-blue-600 transition-colors leading-none">
+                      {p.player_name}
+                    </h2>
+                    {renderSubMetrics(sortKey, p) && (
+                      <div className="flex gap-1.5">
+                        {renderSubMetrics(sortKey, p)}
+                      </div>
+                    )}
+                  </div>
+
                   <div className="flex gap-2 text-[10px] font-bold text-slate-400">
                     <span>{p.position}</span>
                     <span className="border-l pl-2">{p.throws_bats}</span>
                     {p.age && <span className="border-l pl-2">{p.age}歳</span>}
-                    {sortKey === 'cospa' && <span className="border-l pl-2">{p.salary_estimated}</span>}
                   </div>
                 </div>
 
@@ -521,18 +638,5 @@ function Leaderboard() {
         </div>
       )}
     </div>
-  );
-}
-
-export default function RankingPage() {
-  return (
-    <main className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-900">
-      <Suspense fallback={<div className="text-center py-20 font-black">Loading...</div>}>
-        <Leaderboard />
-      </Suspense>
-      <footer className="mt-20 text-center text-slate-400 text-[10px] font-black uppercase tracking-[0.5em] pb-12 italic">
-        © 2026 BASEBALL ROOTS ANALYTICS
-      </footer>
-    </main>
   );
 }
