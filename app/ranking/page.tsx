@@ -25,16 +25,12 @@ interface PlayerRank {
   salary_estimated: string;
   
   // 打撃
-  pa?: number; hits?: number; double?: number; triple?: number; hr?: number; 
-  rbi?: number; sb?: number; bb?: number; hbp?: number; so_bat?: number;
-  avg?: number; obp?: number; slg?: number; ops?: number; woba?: number; isop?: number; wrc_plus?: number;
-  roman?: number; 
+  pa?: number; hits?: number; hr?: number; rbi?: number; sb?: number; bb?: number; so_bat?: number;
+  avg?: number; ops?: number; woba?: number; isop?: number; wrc_plus?: number; babip?: number; roman?: number; 
   
-  // 投手
+  // 投手（★ここに bb9?: number; を復活させました！）
   games?: number; starts?: number; ip_str?: string; wins?: number; losses?: number; sv?: number; hp?: number;
-  hits_allowed?: number; bb_allowed?: number; so_pitch?: number; runs?: number; er?: number;
-  era?: number; whip?: number; k9?: number; bb9?: number; k_bb_pct?: number; fip?: number;
-  unluck?: number; 
+  so_pitch?: number; era?: number; whip?: number; k9?: number; bb9?: number; k_bb_pct?: number; fip?: number; babip_pitch?: number; unluck?: number; 
   
   // 共通
   war: number;
@@ -75,17 +71,6 @@ const formatIP = (ipStr: any): number => {
   return int + (frac === 1 ? 0.333 : frac === 2 ? 0.666 : 0);
 };
 
-const parseSalary = (val: any): number => {
-  if (!val) return 0;
-  const str = String(val);
-  let total = 0;
-  const oku = str.match(/([0-9.]+)億/);
-  if (oku) total += parseFloat(oku[1]) * 10000;
-  const man = str.match(/([0-9.]+)万/);
-  if (man) total += parseFloat(man[1]);
-  return total;
-};
-
 const calculateAge = (birthDateStr: any) => {
   if (!birthDateStr) return null;
   const match = String(birthDateStr).match(/(\d{4})/);
@@ -103,6 +88,7 @@ const METRIC_INFO: Record<string, { desc: string, calc: string, benchmark: strin
   wrc_plus: { desc: '打者が平均の何倍の得点を生み出したかを示す傑出度。', calc: '当サイト独自の簡易算出（※本来必要なパークファクター補正等を省略し、リーグ平均をベースに算出した簡易版を使用しています）', benchmark: '100が平均、120で優秀、140以上はMVP級の活躍。' },
   woba: { desc: '1打席あたりにどれだけ得点産出に貢献したかを表す指標。', calc: '各種イベントに得点価値の重みを掛けて算出（※当サイト独自の固定係数を用いて簡易算出しています）', benchmark: '.330前後が平均、.400超えで一流打者。' },
   isop: { desc: '打率を含まない純粋な長打の割合。長打力を示す。', calc: '長打率 - 打率', benchmark: '.150で平均的、.200以上で強打者、.250以上は長距離砲。' },
+  babip: { desc: 'グラウンド内に飛んだ打球がヒットになる確率。長期的には「.300」前後に収束するため、運の要素（上振れ・下振れ）を測る指標となる。', calc: '(安打 - 本塁打) ÷ (打数 - 三振 - 本塁打 + 犠飛)', benchmark: '.300より極端に高ければ上振れ(幸運)、低ければ下振れ(不運)の可能性が高い。' },
   era: { desc: '投手が9イニング（1試合）投げた場合に失う自責点の平均。', calc: '(自責点 × 9) ÷ 投球回', benchmark: '3.50で優秀な先発、2.00台でエース、1.00台は歴史的。' },
   so_pitch: { desc: '投手が奪った三振の総数。圧倒的な投球能力を示す。', calc: '奪三振数', benchmark: '先発でシーズン100〜150個、200個でタイトル級。' },
   wins: { desc: '投手に記録された勝利数。', calc: 'リードした状態で規定回を投げ終え、勝利した場合等', benchmark: '10勝で一人前の先発、15勝で最多勝争い。' },
@@ -145,14 +131,14 @@ function Leaderboard() {
     { key: 'war', label: 'WAR' }, { key: 'avg', label: '打率' }, { key: 'hr', label: '本塁打' }, 
     { key: 'hits', label: '安打' }, { key: 'rbi', label: '打点' }, { key: 'ops', label: 'OPS' }, 
     { key: 'wrc_plus', label: 'wRC+' }, { key: 'woba', label: 'wOBA' }, { key: 'isop', label: 'ISOp' },
-    { key: 'roman', label: 'ロマン度' }, { key: 'cospa', label: 'コスパ(WAR/億)' }
+    { key: 'babip', label: 'BABIP' }, { key: 'roman', label: 'ロマン度' }, { key: 'cospa', label: 'コスパ(WAR/億)' }
   ];
   const PITCHER_METRICS = [
     { key: 'war', label: 'WAR' }, { key: 'era', label: '防御率' }, { key: 'so_pitch', label: '奪三振' }, 
     { key: 'wins', label: '勝利' }, { key: 'sv', label: 'セーブ' }, { key: 'hp', label: 'HP' }, 
     { key: 'k_bb_pct', label: 'K-BB%' }, { key: 'k9', label: 'K/9' }, { key: 'bb9', label: 'BB/9' },
     { key: 'whip', label: 'WHIP' }, { key: 'fip', label: 'FIP' },
-    { key: 'unluck', label: '不運度' }, { key: 'cospa', label: 'コスパ(WAR/億)' }
+    { key: 'babip', label: 'BABIP' }, { key: 'unluck', label: '不運度' }, { key: 'cospa', label: 'コスパ(WAR/億)' }
   ];
   const activeMetrics = role === 'hitter' ? HITTER_METRICS : PITCHER_METRICS;
 
@@ -213,9 +199,8 @@ function Leaderboard() {
           }
 
           const age = calculateAge(p?.birth_date || p?.birthday);
-          
-          const draftRankStr = String(p?.draft_rank || '');
           const isRookie = p?.draft_year && String(p.draft_year).includes('2025');
+          const draftRankStr = String(p?.draft_rank || '');
           const isTatakiage = p?.is_developmental || (draftRankStr && parseInt(draftRankStr.replace(/[^0-9]/g, '')) >= 5);
           const isU25 = age !== null && age <= 25;
 
@@ -224,51 +209,40 @@ function Leaderboard() {
           if (profFilter === 'tatakiage' && !isTatakiage) return;
 
           const teamGameCount = teamGames[team] || globalMaxGames;
-          let is_qualified = false;
-          let is_half_qualified = false;
-
-          const warVal = role === 'hitter' 
-            ? toF(stat['野手WAR'] || stat.war || stat.WAR) 
-            : toF(stat['投手WAR'] || stat.war || stat.WAR);
-            
-          const salaryVal = parseSalary(p?.salary_estimated);
-          const cospaVal = salaryVal > 0 ? (warVal / (salaryVal / 10000)) : 0;
-
           const { league: currentLeague, shortName: currentShortTeam } = getTeamInfo(team);
 
           if (role === 'hitter') {
             const pa = toF(stat.打席);
             if (pa === 0) return;
 
-            is_qualified = pa >= Math.floor(teamGameCount * 3.1);
-            is_half_qualified = pa >= Math.floor((teamGameCount * 3.1) / 2);
+            const is_qualified = pa >= Math.floor(teamGameCount * 3.1);
+            const is_half_qualified = pa >= Math.floor((teamGameCount * 3.1) / 2);
 
             if (filterType === 'qualified' && !is_qualified) return;
             if (filterType === 'half' && !is_half_qualified) return;
-
-            const hits = toF(stat.安打);
-            const dbl = toF(stat.二塁打);
-            const tpl = toF(stat.三塁打);
-            const hr = toF(stat.本塁打);
-            const bb = toF(stat.四球);
-            const hbp = toF(stat.死球);
-            const avg = toF(stat.打率);
-            const slg = toF(stat.長打率);
-            
-            const wobaVal = pa > 0 ? (0.7 * bb + 0.72 * hbp + 0.9 * (hits - dbl - tpl - hr) + 1.25 * dbl + 1.6 * tpl + 2.0 * hr) / pa : 0;
-            const isopVal = slg - avg;
-            const bbPct = pa > 0 ? bb / pa : 0;
-            const romanVal = isopVal + bbPct - avg; 
 
             processed.push({
               player_id: safeId,
               player_name: String(stat.名前 || p?.player_name || '不明'),
               team_name: team, short_team: currentShortTeam, league: currentLeague, position: pos,
               throws_bats: throwsBats, age, salary_estimated: String(p?.salary_estimated || '不明'),
-              war: warVal, cospa: cospaVal, roman: romanVal,
-              pa, hits, double: dbl, triple: tpl, hr, rbi: toF(stat.打点), sb: toF(stat.盗塁),
-              bb, hbp, so_bat: toF(stat.三振), avg, obp: toF(stat.出塁率), slg, ops: toF(stat.OPS || (toF(stat.出塁率) + slg)),
-              woba: wobaVal, isop: isopVal, wrc_plus: toF(stat['wRC+'])
+              
+              war: toF(stat['野手WAR'] || stat.WAR),
+              cospa: toF(stat.cospa),
+              roman: toF(stat.roman),
+              pa, 
+              hits: toF(stat.安打), 
+              hr: toF(stat.本塁打), 
+              rbi: toF(stat.打点), 
+              sb: toF(stat.盗塁),
+              bb: toF(stat.四球), 
+              so_bat: toF(stat.三振), 
+              avg: toF(stat.打率), 
+              ops: toF(stat.OPS),
+              woba: toF(stat.wOBA), 
+              isop: toF(stat.ISOp), 
+              wrc_plus: toF(stat['wRC+']),
+              babip: toF(stat.BABIP)
             });
 
           } else {
@@ -282,33 +256,36 @@ function Leaderboard() {
             if (posFilter === 'starter' && starts < games / 2) return;
             if (posFilter === 'reliever' && starts >= games / 2) return;
 
-            is_qualified = ip >= teamGameCount;
-            is_half_qualified = ip >= (teamGameCount / 2);
+            const is_qualified = ip >= teamGameCount;
+            const is_half_qualified = ip >= (teamGameCount / 2);
 
             if (filterType === 'qualified' && !is_qualified) return;
             if (filterType === 'half' && !is_half_qualified) return;
-
-            const walks = toF(stat.与四球 || stat.四球);
-            const hitsAllowed = toF(stat.被安打 || stat.安打);
-            const so = toF(stat.三振 || stat.奪三振);
-            const hbp = toF(stat.死球 || stat.与死球);
-            const batters = toF(stat.打者) || (ip > 0 ? Math.round(ip * 3 + hitsAllowed + walks + hbp) : 0);
-            const eraVal = toF(stat.防御率);
-            const fipVal = toF(stat.FIP);
-            const unluckVal = eraVal - fipVal; 
 
             processed.push({
               player_id: safeId,
               player_name: String(stat.名前 || p?.player_name || '不明'),
               team_name: team, short_team: currentShortTeam, league: currentLeague, position: pos,
               throws_bats: throwsBats, age, salary_estimated: String(p?.salary_estimated || '不明'),
-              war: warVal, cospa: cospaVal, unluck: unluckVal,
-              games, starts, ip_str: ipStr, wins: toF(stat.勝利), losses: toF(stat.敗北),
-              sv: toF(stat.セーブ), hp: toF(stat.ホールドポイント || stat.HP), hits_allowed: hitsAllowed,
-              bb_allowed: walks, so_pitch: so, runs: toF(stat.失点), er: toF(stat.自責点),
-              era: eraVal, whip: ip > 0 ? (walks + hitsAllowed) / ip : 0,
-              k9: ip > 0 ? (so * 9) / ip : 0, bb9: ip > 0 ? (walks * 9) / ip : 0,
-              k_bb_pct: batters > 0 ? ((so - walks) / batters) * 100 : 0, fip: fipVal
+              
+              war: toF(stat['投手WAR'] || stat.WAR), 
+              cospa: toF(stat.cospa), 
+              unluck: toF(stat.unluck),
+              games, 
+              starts, 
+              ip_str: ipStr, 
+              wins: toF(stat.勝利), 
+              losses: toF(stat.敗北),
+              sv: toF(stat.セーブ), 
+              hp: toF(stat.ホールドポイント || stat.HP), 
+              so_pitch: toF(stat.三振), 
+              era: toF(stat.防御率), 
+              whip: toF(stat.WHIP),
+              k9: toF(stat['K/9']), 
+              bb9: toF(stat['BB/9']), // ★ エラーになっていた部分です
+              k_bb_pct: toF(stat['K-BB%']), 
+              fip: toF(stat.FIP),
+              babip_pitch: toF(stat.BABIP)
             });
           }
         });
@@ -320,8 +297,8 @@ function Leaderboard() {
         });
 
         const sorted = filtered.sort((a, b) => {
-          const valA = (a as any)[sortKey] ?? -999;
-          const valB = (b as any)[sortKey] ?? -999;
+          const valA = (a as any)[sortKey === 'babip' && role === 'pitcher' ? 'babip_pitch' : sortKey] ?? -999;
+          const valB = (b as any)[sortKey === 'babip' && role === 'pitcher' ? 'babip_pitch' : sortKey] ?? -999;
           if (['era', 'fip', 'whip', 'bb9'].includes(sortKey)) return valA - valB;
           return valB - valA;
         });
@@ -350,7 +327,7 @@ function Leaderboard() {
 
   const formatMainStat = (key: string, value: number) => {
     if (value === undefined || isNaN(value)) return '-';
-    if (['avg', 'woba', 'isop'].includes(key)) {
+    if (['avg', 'woba', 'isop', 'babip'].includes(key)) {
       const s = value.toFixed(3);
       return s.startsWith('0.') ? s.substring(1) : s.startsWith('-0.') ? '-' + s.substring(2) : s;
     }
@@ -504,7 +481,7 @@ function Leaderboard() {
                 <div className="text-right border-l pl-4 min-w-[80px]">
                   <p className="text-[9px] font-black text-slate-300 uppercase mb-1">{activeMetrics.find(m => m.key === sortKey)?.label}</p>
                   <div className="text-2xl font-black italic text-slate-900 leading-none">
-                    {formatMainStat(sortKey, (p as any)[sortKey])}
+                    {formatMainStat(sortKey, sortKey === 'babip' && role === 'pitcher' ? p.babip_pitch : (p as any)[sortKey])}
                   </div>
                 </div>
               </div>
