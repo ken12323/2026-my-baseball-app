@@ -41,9 +41,13 @@ PITCHER_DB_COLS = ["player_id", "名前", "年度", "所属球団", "背番号",
 
 def safe_float(val):
     try:
-        val = str(val).replace('-', '0').replace('null', '0').replace('*', '').replace(',', '')
-        return float(val) if val else 0.0
-    except: return 0.0
+        if val is None: return 0.0
+        # 文字列化して、記号（+やカンマ）を除去してからfloat変換
+        s = str(val).replace('+', '').replace('null', '0').replace('*', '').replace(',', '').strip()
+        if not s or s == '-': return 0.0
+        return float(s)
+    except: 
+        return 0.0
 
 def format_ip(ip_str):
     try:
