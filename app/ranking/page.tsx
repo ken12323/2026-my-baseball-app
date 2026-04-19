@@ -93,7 +93,6 @@ const calculateAge = (birthDateStr: any) => {
   return 2026 - parseInt(match[1], 10);
 };
 
-// ★修正：指標の説明・計算式を「当サイトの簡易仕様」である旨を明記
 const METRIC_INFO: Record<string, { desc: string, calc: string, benchmark: string }> = {
   war: { desc: '打撃・走塁・守備・投球を総合評価し、控え選手に比べてチームに何勝分上乗せしたかを示す指標。', calc: '当サイト独自の簡易算出（※本来必要なパークファクターや詳細な守備指標を簡略化し、基礎スタッツから推計した代替値を使用しています）', benchmark: '2.0でレギュラー定着、4.0でオールスター級、6.0以上でMVP級。' },
   avg: { desc: '打数が安打になる確率。確実性を示す伝統的な指標。', calc: '安打 ÷ 打数', benchmark: '.250が平均的、.280で好打者、.300（3割）で一流。' },
@@ -114,7 +113,7 @@ const METRIC_INFO: Record<string, { desc: string, calc: string, benchmark: strin
   bb9: { desc: '9イニング（1試合）あたりに与える四球の数。', calc: '(与四球 × 9) ÷ 投球回', benchmark: '3.0以下で優秀、2.0以下で抜群の制球力。' },
   whip: { desc: '1イニングあたりに何人の走者を出したか。', calc: '(与四球 + 被安打) ÷ 投球回', benchmark: '1.20未満で優秀、1.00未満で球界を代表するエース。' },
   fip: { desc: '被本塁打・与四死球・奪三振のみで評価した、運に左右されない防御率。', calc: '(13×被本塁打 + 3×(与四球+与死球) - 2×奪三振) ÷ 投球回 + リーグ定数（※定数は概算値を使用）', benchmark: '3.50で優秀、2.00台でエース、1.00台は歴史的。' },
-  cospa: { desc: '1億円あたりどれだけチームの勝利（WAR）に貢献しているかを示すコストパフォーマンス。', calc: 'WAR ÷ (推定年俸 ÷ 1億)', benchmark: '若手や育成出身が上位に来やすく、1.0を超えれば超優良コスパ。' },
+  cospa: { desc: '1億円あたりどれだけチームの勝利（WAR）に貢献しているかを示すコストパフォーマンス（年俸貢献度 / ROI：投資利益率）。チーム編成の視点において極めて重要なバリュー指標となります。', calc: 'WAR ÷ (推定年俸 ÷ 1億)', benchmark: '若手や育成出身が上位に来やすく、1.0を超えれば超優良コスパ。' },
   unluck: { desc: '防御率からFIPを引いた値。実際の失点より投球内容が優れている（不運である）度合いを示す。', calc: '防御率 - FIP', benchmark: 'プラスが大きいほど不運（バックの守備難や運の悪さ）、マイナスが大きいほど幸運。' },
   roman: { desc: '打率は低いが、純粋な長打力（ISOp）と四球を選ぶ力に長けた「ロマン砲」度合いを示す当サイト独自指標。', calc: 'ISOp + 四球率 - 打率', benchmark: '数値が高いほど「当たれば飛ぶ＆選球眼が良いが確実性が低い」ロマン溢れる打者。' }
 };
@@ -214,9 +213,9 @@ function Leaderboard() {
           }
 
           const age = calculateAge(p?.birth_date || p?.birthday);
-          const isRookie = p?.draft_year && String(p.draft_year).includes('2025');
           
           const draftRankStr = String(p?.draft_rank || '');
+          const isRookie = p?.draft_year && String(p.draft_year).includes('2025');
           const isTatakiage = p?.is_developmental || (draftRankStr && parseInt(draftRankStr.replace(/[^0-9]/g, '')) >= 5);
           const isU25 = age !== null && age <= 25;
 
