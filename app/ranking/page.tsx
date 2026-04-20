@@ -6,6 +6,7 @@ import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 
 // --- 1. 型定義 ---
+type LeagueLevel = '1' | '2'; // ★追加: 1軍か2軍か
 type League = 'ALL' | 'Central' | 'Pacific';
 type Role = 'hitter' | 'pitcher';
 type FilterType = 'qualified' | 'half' | 'all';
@@ -24,22 +25,20 @@ interface PlayerRank {
   age: number | null;
   salary_estimated: string;
   
-  // 打撃
   pa?: number; hits?: number; hr?: number; rbi?: number; sb?: number; bb?: number; so_bat?: number;
   avg?: number; ops?: number; woba?: number; isop?: number; wrc_plus?: number; babip?: number; roman?: number; 
-  obp?: number; slg?: number; // ★ 内訳表示用に追加
+  obp?: number; slg?: number; 
   
-  // 投手
   games?: number; starts?: number; ip_str?: string; wins?: number; losses?: number; sv?: number; hp?: number;
   so_pitch?: number; era?: number; whip?: number; k9?: number; bb9?: number; k_bb_pct?: number; fip?: number; babip_pitch?: number; unluck?: number; 
   
-  // 共通
   war: number;
   cospa: number;
 }
 
 const CENTRAL_TEAMS = ['阪神', '広島', 'DeNA', '巨人', 'ヤクルト', '中日'];
 const PACIFIC_TEAMS = ['オリックス', 'ロッテ', 'ソフトバンク', '楽天', '西武', '日本ハム'];
+const FARM_ONLY_TEAMS = ['オイシックス', 'くふうハヤテ']; // ★追加: 2軍専用球団
 
 const getTeamInfo = (teamName: string): { league: League | 'Other', shortName: string } => {
   const cleanTeam = String(teamName).replace(/[\s　]+/g, '');
@@ -56,6 +55,10 @@ const getTeamInfo = (teamName: string): { league: League | 'Other', shortName: s
   if (cleanTeam.includes('楽天') || cleanTeam.includes('イーグルス')) return { league: 'Pacific', shortName: '楽天' };
   if (cleanTeam.includes('西武') || cleanTeam.includes('ライオンズ')) return { league: 'Pacific', shortName: '西武' };
   if (cleanTeam.includes('日本ハム') || cleanTeam.includes('ファイターズ')) return { league: 'Pacific', shortName: '日本ハム' };
+  
+  // ★追加: 2軍球団の判定
+  if (cleanTeam.includes('オイシックス') || cleanTeam.includes('新潟')) return { league: 'Other', shortName: 'オイシックス' };
+  if (cleanTeam.includes('ハヤテ') || cleanTeam.includes('静岡')) return { league: 'Other', shortName: 'くふうハヤテ' };
   
   return { league: 'Other', shortName: 'Other' };
 };
@@ -100,9 +103,9 @@ const METRIC_INFO: Record<string, { desc: string, calc: string, benchmark: strin
   bb9: { desc: '9イニング（1試合）あたりに与える四球の数。', calc: '(与四球 × 9) ÷ 投球回', benchmark: '3.0以下で優秀、2.0以下で抜群の制球力。' },
   whip: { desc: '1イニングあたりに何人の走者を出したか。', calc: '(与四球 + 被安打) ÷ 投球回', benchmark: '1.20未満で優秀、1.00未満で球界を代表するエース。' },
   fip: { desc: '被本塁打・与四死球・奪三振のみで評価した、運に左右されない防御率。', calc: '(13×被本塁打 + 3×(与四球+与死球) - 2×奪三振) ÷ 投球回 + リーグ定数（※定数は概算値を使用）', benchmark: '3.50で優秀、2.00台でエース、1.00台は歴史的。' },
-  cospa: { desc: '1億円あたりどれだけチームの勝利（WAR）に貢献しているかを示すコストパフォーマンス（年俸貢献度 / ROI：投資利益率）。チーム編成の視点において極めて重要なバリュー指標となります。', calc: 'WAR ÷ (推定年俸 ÷ 1億)', benchmark: '若手や育成出身が上位に来やすく、1.0を超えれば超優良コスパ。' },
+  cospa: { desc: '1億円あたりどれだけチームの勝利（WAR）に貢献しているかを示すコストパフォーマンス（年俸貢献度 / ROI：投資利益率）。', calc: 'WAR ÷ (推定年俸 ÷ 1億)', benchmark: '若手や育成出身が上位に来やすく、1.0を超えれば超優良コスパ。' },
   unluck: { desc: '防御率からFIPを引いた値。実際の失点より投球内容が優れている（不運である）度合いを示す。', calc: '防御率 - FIP', benchmark: 'プラスが大きいほど不運（バックの守備難や運の悪さ）、マイナスが大きいほど幸運。' },
-  roman: { desc: '打率は低いが、純粋な長打力（ISOp）があり、三振を恐れずフルスイングする「真のロマン砲」度合いを示す当サイト独自指標。', calc: 'ISOp + 三振率 - 打率（※ただしISOpが0.150未満の選手は対象外として0になります）', benchmark: '数値が高いほど「三振かホームランか、当たればデカいが確実性は低い」というファンが夢を見るロマン溢れる打者。' }
+  roman: { desc: '打率は低いが、純粋な長打力（ISOp）があり、三振を恐れずフルスイングする「真のロマン砲」度合いを示す当サイト独自指標。', calc: 'ISOp + 三振率 - 打率（※ISOp 0.150未満は対象外）', benchmark: '数値が高いほど「三振かホームランか、当たればデカいが確実性は低い」というファンが夢を見るロマン溢れる打者。' }
 };
 
 const PROF_INFO: Record<string, string> = {
@@ -128,6 +131,7 @@ function Leaderboard() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
+  const leagueLevel = (searchParams.get('level') as LeagueLevel) || '1'; // ★追加: 1軍/2軍パラメータ
   const role = (searchParams.get('role') as Role) || 'hitter';
   const league = (searchParams.get('league') as League) || 'ALL';
   const sortKey = searchParams.get('sort') || 'war';
@@ -159,22 +163,26 @@ function Leaderboard() {
     async function fetchRanking() {
       try {
         setLoading(true);
-        const table = role === 'hitter' ? 'batting_stats' : 'pitching_stats';
+        
+        // ★ 1軍と2軍で取得するテーブルを切り替え！
+        const targetTable = role === 'hitter' 
+          ? (leagueLevel === '2' ? 'farm_batting_stats' : 'batting_stats')
+          : (leagueLevel === '2' ? 'farm_pitching_stats' : 'pitching_stats');
         
         const [{ data: statsData }, { data: playersData }, { data: gamesData }] = await Promise.all([
-          supabase.from(table).select('*').eq('年度', 2026),
+          supabase.from(targetTable).select('*').eq('年度', 2026),
           supabase.from('players').select('*'),
-          supabase.from('batting_stats').select('所属球団, 試合').eq('年度', 2026)
+          supabase.from(targetTable).select('所属球団, 試合, 登板').eq('年度', 2026) // チーム別試合数も動的に
         ]);
 
         if (!statsData || !playersData) return;
 
         const teamGames: Record<string, number> = {};
-        let globalMaxGames = 143; 
+        let globalMaxGames = leagueLevel === '2' ? 100 : 143; // ファームは一旦MAX100程度に仮置き
         if (gamesData) {
           gamesData.forEach((row: any) => {
             const t = String(row.所属球団);
-            const g = parseInt(row.試合) || 0;
+            const g = parseInt(row.試合 || row.登板) || 0;
             if (!teamGames[t] || g > teamGames[t]) teamGames[t] = g;
           });
           const maxVals = Object.values(teamGames);
@@ -228,8 +236,10 @@ function Leaderboard() {
             const pa = toF(stat.打席);
             if (pa === 0) return;
 
-            const is_qualified = pa >= Math.floor(teamGameCount * 3.1);
-            const is_half_qualified = pa >= Math.floor((teamGameCount * 3.1) / 2);
+            // ファームの規定打席は「試合数 × 2.7」
+            const multiplier = leagueLevel === '2' ? 2.7 : 3.1;
+            const is_qualified = pa >= Math.floor(teamGameCount * multiplier);
+            const is_half_qualified = pa >= Math.floor((teamGameCount * multiplier) / 2);
 
             if (filterType === 'qualified' && !is_qualified) return;
             if (filterType === 'half' && !is_half_qualified) return;
@@ -271,8 +281,10 @@ function Leaderboard() {
             if (posFilter === 'starter' && starts < games / 2) return;
             if (posFilter === 'reliever' && starts >= games / 2) return;
 
-            const is_qualified = ip >= teamGameCount;
-            const is_half_qualified = ip >= (teamGameCount / 2);
+            // ファームの規定投球回は「試合数 × 0.8」
+            const multiplier = leagueLevel === '2' ? 0.8 : 1.0;
+            const is_qualified = ip >= (teamGameCount * multiplier);
+            const is_half_qualified = ip >= ((teamGameCount * multiplier) / 2);
 
             if (filterType === 'qualified' && !is_qualified) return;
             if (filterType === 'half' && !is_half_qualified) return;
@@ -290,7 +302,7 @@ function Leaderboard() {
               starts, 
               ip_str: ipStr, 
               wins: toF(stat.勝利), 
-              losses: toF(stat.敗北),
+              losses: toF(stat.敗北 || stat.敗戦),
               sv: toF(stat.セーブ), 
               hp: toF(stat.ホールドポイント || stat.HP), 
               so_pitch: toF(stat.三振), 
@@ -308,7 +320,7 @@ function Leaderboard() {
         });
 
         const filtered = processed.filter(p => {
-          if (league !== 'ALL' && p.league !== league) return false;
+          if (leagueLevel === '1' && league !== 'ALL' && p.league !== league) return false;
           if (teamParam !== 'ALL' && p.short_team !== teamParam) return false;
           return true;
         });
@@ -328,11 +340,15 @@ function Leaderboard() {
       }
     }
     fetchRanking();
-  }, [role, league, sortKey, filterType, teamParam, posFilter, batThrowFilter, profFilter]);
+  }, [leagueLevel, role, league, sortKey, filterType, teamParam, posFilter, batThrowFilter, profFilter]);
 
   const updateParam = (key: string, value: string) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set(key, value);
+    if (key === 'level') {
+      params.set('team', 'ALL'); // 1軍/2軍切り替え時はチーム絞り込みをリセット
+      params.set('league', 'ALL');
+    }
     if (key === 'role') {
       params.set('sort', 'war'); 
       params.set('pos', 'all'); 
@@ -355,7 +371,6 @@ function Leaderboard() {
     return Math.round(value);
   };
 
-  // ★ 追加：ソートしている指標の内訳をバッジとして返すヘルパー関数
   const renderSubMetrics = (key: string, p: PlayerRank) => {
     const renderBadge = (label: string, val: string | number) => (
       <span className="inline-flex items-center text-[10px] font-bold border border-orange-200 rounded px-1.5 py-0.5 text-orange-700 bg-orange-50 whitespace-nowrap shadow-sm">
@@ -387,67 +402,37 @@ function Leaderboard() {
       );
     }
     if (key === 'ops') {
-      return (
-        <>
-          {renderBadge('出塁率', formatAvgLocal(p.obp || 0))}
-          {renderBadge('長打率', formatAvgLocal(p.slg || 0))}
-        </>
-      );
+      return <>{renderBadge('出塁率', formatAvgLocal(p.obp || 0))}{renderBadge('長打率', formatAvgLocal(p.slg || 0))}</>;
     }
     if (key === 'isop') {
-      return (
-        <>
-          {renderBadge('長打率', formatAvgLocal(p.slg || 0))}
-          {renderBadge('打率', formatAvgLocal(p.avg || 0))}
-        </>
-      );
+      return <>{renderBadge('長打率', formatAvgLocal(p.slg || 0))}{renderBadge('打率', formatAvgLocal(p.avg || 0))}</>;
     }
     if (key === 'wrc_plus') {
-      return (
-        <>
-          {renderBadge('wOBA', formatAvgLocal(p.woba || 0))}
-        </>
-      );
+      return <>{renderBadge('wOBA', formatAvgLocal(p.woba || 0))}</>;
     }
     if (key === 'unluck') {
-      return (
-        <>
-          {renderBadge('防', (p.era || 0).toFixed(2))}
-          {renderBadge('FIP', (p.fip || 0).toFixed(2))}
-        </>
-      );
+      return <>{renderBadge('防', (p.era || 0).toFixed(2))}{renderBadge('FIP', (p.fip || 0).toFixed(2))}</>;
     }
     if (key === 'k_bb_pct') {
-      return (
-        <>
-          {renderBadge('K/9', (p.k9 || 0).toFixed(2))}
-          {renderBadge('BB/9', (p.bb9 || 0).toFixed(2))}
-        </>
-      );
+      return <>{renderBadge('K/9', (p.k9 || 0).toFixed(2))}{renderBadge('BB/9', (p.bb9 || 0).toFixed(2))}</>;
     }
     if (key === 'whip') {
-      return (
-        <>
-          {renderBadge('被安打', p.hits || 0)}
-          {renderBadge('四球', p.bb || 0)}
-        </>
-      );
+      return <>{renderBadge('被安打', p.hits || 0)}{renderBadge('四球', p.bb || 0)}</>;
     }
     if (key === 'babip') {
-       return (
-         <>
-           {renderBadge(role === 'hitter' ? '安打' : '被安打', p.hits || 0)}
-           {renderBadge(role === 'hitter' ? '本塁打' : '被本塁打', p.hr || 0)}
-         </>
-       );
+       return <>{renderBadge(role === 'hitter' ? '安打' : '被安打', p.hits || 0)}{renderBadge(role === 'hitter' ? '本塁打' : '被本塁打', p.hr || 0)}</>;
     }
     return null;
   };
 
-  const displayTeams = league === 'Central' ? CENTRAL_TEAMS : league === 'Pacific' ? PACIFIC_TEAMS : [...CENTRAL_TEAMS, ...PACIFIC_TEAMS];
+  // ★ 2軍の時は「オイシックス」「ハヤテ」をチーム一覧に含める
+  const displayTeams = leagueLevel === '2' 
+    ? [...CENTRAL_TEAMS, ...PACIFIC_TEAMS, ...FARM_ONLY_TEAMS]
+    : (league === 'Central' ? CENTRAL_TEAMS : league === 'Pacific' ? PACIFIC_TEAMS : [...CENTRAL_TEAMS, ...PACIFIC_TEAMS]);
 
   return (
     <div className="max-w-4xl mx-auto">
+      {/* トップメニュー */}
       <div className="flex bg-slate-200 p-1.5 rounded-2xl mb-6 shadow-inner">
         <Link href="/" className="flex-1 text-center py-3.5 rounded-xl text-sm font-black text-slate-500 hover:text-blue-900 transition-all flex items-center justify-center gap-2 hover:bg-slate-100/50">
           <span className="text-lg">🌱</span> ルーツ別
@@ -460,18 +445,35 @@ function Leaderboard() {
       <div className="bg-white rounded-2xl shadow-xl border-t-8 border-orange-500 p-5 mb-6">
         <div className="flex flex-col gap-4">
           
+          {/* ★ 追加：1軍・ファーム切り替えトグル */}
+          <div className="flex bg-slate-100 p-1.5 rounded-xl mb-2">
+            <button 
+              onClick={() => updateParam('level', '1')} 
+              className={`flex-1 py-3 rounded-lg text-sm font-black transition-all ${leagueLevel === '1' ? 'bg-white text-slate-900 shadow-md border border-slate-200' : 'text-slate-400 hover:text-slate-600'}`}>
+              NPB 1軍
+            </button>
+            <button 
+              onClick={() => updateParam('level', '2')} 
+              className={`flex-1 py-3 rounded-lg text-sm font-black transition-all ${leagueLevel === '2' ? 'bg-green-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}>
+              ファーム (2軍)
+            </button>
+          </div>
+
           <div className="flex bg-slate-100 p-1 rounded-xl">
             <button onClick={() => updateParam('role', 'hitter')} className={`flex-1 py-2.5 rounded-lg text-xs font-black transition-all ${role === 'hitter' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400'}`}>野手ランキング</button>
             <button onClick={() => updateParam('role', 'pitcher')} className={`flex-1 py-2.5 rounded-lg text-xs font-black transition-all ${role === 'pitcher' ? 'bg-red-600 text-white shadow-md' : 'text-slate-400'}`}>投手ランキング</button>
           </div>
 
-          <div className="flex gap-2">
-            {(['ALL', 'Central', 'Pacific'] as League[]).map(l => (
-              <button key={l} onClick={() => updateParam('league', l)} className={`flex-1 py-2 rounded-lg text-[10px] font-black border-2 transition-all ${league === l ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-100 text-slate-400'}`}>
-                {l === 'ALL' ? '両リーグ' : l === 'Central' ? 'セ・リーグ' : 'パ・リーグ'}
-              </button>
-            ))}
-          </div>
+          {/* 1軍の時のみリーグ絞り込みを表示 */}
+          {leagueLevel === '1' && (
+            <div className="flex gap-2">
+              {(['ALL', 'Central', 'Pacific'] as League[]).map(l => (
+                <button key={l} onClick={() => updateParam('league', l)} className={`flex-1 py-2 rounded-lg text-[10px] font-black border-2 transition-all ${league === l ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-100 text-slate-400'}`}>
+                  {l === 'ALL' ? '両リーグ' : l === 'Central' ? 'セ・リーグ' : 'パ・リーグ'}
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar border-b border-slate-100">
             <button onClick={() => updateParam('team', 'ALL')} className={`whitespace-nowrap px-4 py-1.5 rounded-full text-[10px] font-black transition-all ${teamParam === 'ALL' ? 'bg-slate-700 text-white shadow-md' : 'bg-slate-50 text-slate-400 border border-slate-200'}`}>
@@ -484,10 +486,9 @@ function Leaderboard() {
             ))}
           </div>
 
+          {/* ポジション・投打・経歴・規定フィルター */}
           <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-            <button onClick={() => updateParam('pos', 'all')} className={`whitespace-nowrap px-4 py-1.5 rounded-full text-[10px] font-black transition-all ${posFilter === 'all' ? 'bg-slate-800 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200'}`}>
-              全ポジション
-            </button>
+            <button onClick={() => updateParam('pos', 'all')} className={`whitespace-nowrap px-4 py-1.5 rounded-full text-[10px] font-black transition-all ${posFilter === 'all' ? 'bg-slate-800 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200'}`}>全ポジション</button>
             {role === 'hitter' ? (
               <>
                 <button onClick={() => updateParam('pos', 'catcher')} className={`px-4 py-1.5 rounded-full text-[10px] font-black transition-all ${posFilter === 'catcher' ? 'bg-slate-800 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200'}`}>捕手</button>
@@ -509,13 +510,6 @@ function Leaderboard() {
             {role === 'hitter' && <button onClick={() => updateParam('bt', 'both')} className={`flex-1 py-1.5 rounded-lg text-[10px] font-black border-2 transition-all ${batThrowFilter === 'both' ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-100 text-slate-400 hover:bg-slate-50'}`}>両打</button>}
           </div>
 
-          <div className="flex gap-2">
-            <button onClick={() => updateParam('prof', 'all')} className={`flex-1 py-2 rounded-lg text-[10px] font-black border-2 transition-all ${profFilter === 'all' ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-100 text-slate-400 hover:bg-slate-50'}`}>全経歴</button>
-            <button onClick={() => updateParam('prof', 'rookie')} className={`flex-1 py-2 rounded-lg text-[10px] font-black border-2 transition-all ${profFilter === 'rookie' ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-100 text-slate-400 hover:bg-slate-50'}`}>ルーキー</button>
-            <button onClick={() => updateParam('prof', 'u25')} className={`flex-1 py-2 rounded-lg text-[10px] font-black border-2 transition-all ${profFilter === 'u25' ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-100 text-slate-400 hover:bg-slate-50'}`}>U-25</button>
-            <button onClick={() => updateParam('prof', 'tatakiage')} className={`flex-1 py-2 rounded-lg text-[10px] font-black border-2 transition-all ${profFilter === 'tatakiage' ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-100 text-slate-400 hover:bg-slate-50'}`}>叩き上げ</button>
-          </div>
-
           <div className="flex gap-2 border-b border-slate-100 pb-4 mb-2">
             {(['qualified', 'half', 'all'] as FilterType[]).map(f => (
               <button key={f} onClick={() => updateParam('filter', f)} className={`flex-1 py-2 rounded-lg text-[10px] font-black border-2 transition-all ${filterType === f ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-100 text-slate-400 hover:bg-slate-50'}`}>
@@ -526,7 +520,7 @@ function Leaderboard() {
 
           <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
             {activeMetrics.map(m => (
-              <button key={m.key} onClick={() => updateParam('sort', m.key)} className={`whitespace-nowrap px-5 py-2 rounded-full text-[10px] font-black transition-all ${sortKey === m.key ? 'bg-orange-500 text-white shadow-lg' : 'bg-slate-50 text-slate-400 border border-slate-100'}`}>
+              <button key={m.key} onClick={() => updateParam('sort', m.key)} className={`whitespace-nowrap px-5 py-2 rounded-full text-[10px] font-black transition-all ${sortKey === m.key ? (leagueLevel === '2' ? 'bg-green-600' : 'bg-orange-500') + ' text-white shadow-lg' : 'bg-slate-50 text-slate-400 border border-slate-100'}`}>
                 {m.label}
               </button>
             ))}
@@ -534,15 +528,9 @@ function Leaderboard() {
         </div>
       </div>
 
-      {profFilter !== 'all' && PROF_INFO[profFilter] && (
-        <div className="mb-4 bg-blue-50 border border-blue-100 text-blue-800 text-[11px] font-bold px-4 py-3 rounded-xl flex items-center gap-2 shadow-sm">
-          {PROF_INFO[profFilter]}
-        </div>
-      )}
-
       {METRIC_INFO[sortKey] && (
         <div className="mb-6 bg-slate-50 border border-slate-200 rounded-2xl p-5 shadow-sm relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-1.5 h-full bg-orange-400"></div>
+          <div className={`absolute top-0 left-0 w-1.5 h-full ${leagueLevel === '2' ? 'bg-green-500' : 'bg-orange-400'}`}></div>
           <h3 className="text-lg font-black text-slate-800 mb-2 pl-2">
             {activeMetrics.find(m => m.key === sortKey)?.label} <span className="text-xs font-bold text-slate-400 ml-1">とは？</span>
           </h3>
@@ -561,24 +549,25 @@ function Leaderboard() {
       )}
 
       {loading ? (
-        <div className="text-center py-20 text-orange-500 font-black animate-pulse text-xl">NPBデータを解析中...</div>
+        <div className={`text-center py-20 font-black animate-pulse text-xl ${leagueLevel === '2' ? 'text-green-600' : 'text-orange-500'}`}>
+          {leagueLevel === '2' ? 'ファームデータを解析中...' : 'NPBデータを解析中...'}
+        </div>
       ) : players.length === 0 ? (
         <div className="text-center py-20 bg-white rounded-2xl border border-slate-100 shadow-sm text-slate-400 font-black">条件に一致する選手がいません</div>
       ) : (
         <div className="space-y-3 pb-20">
           {players.map((p, index) => (
-            <Link href={`/player/${p.player_id}`} key={p.player_id} className="block bg-white rounded-2xl p-4 shadow-sm border border-slate-100 hover:border-orange-300 transition-all group">
+            <Link href={`/player/${p.player_id}`} key={p.player_id} className={`block bg-white rounded-2xl p-4 shadow-sm border border-slate-100 transition-all group ${leagueLevel === '2' ? 'hover:border-green-300' : 'hover:border-orange-300'}`}>
               <div className="flex items-center gap-4">
-                <div className={`text-3xl font-black italic w-10 text-center ${index < 3 ? 'text-orange-500' : 'text-slate-200'}`}>
+                <div className={`text-3xl font-black italic w-10 text-center ${index < 3 ? (leagueLevel === '2' ? 'text-green-600' : 'text-orange-500') : 'text-slate-200'}`}>
                   {index + 1}
                 </div>
 
                 <div className="flex-1 min-w-0">
                   <p className="text-[9px] font-black text-blue-500 uppercase mb-0.5">{p.team_name}</p>
                   
-                  {/* ★ 変更：名前の横に動的な内訳バッジを表示 */}
                   <div className="flex items-center flex-wrap gap-x-3 gap-y-1.5 mb-1.5">
-                    <h2 className="text-lg font-black text-slate-800 group-hover:text-blue-600 transition-colors leading-none">
+                    <h2 className={`text-lg font-black text-slate-800 transition-colors leading-none ${leagueLevel === '2' ? 'group-hover:text-green-700' : 'group-hover:text-blue-600'}`}>
                       {p.player_name}
                     </h2>
                     {renderSubMetrics(sortKey, p) && (
@@ -616,8 +605,8 @@ function Leaderboard() {
                     <span>{p.so_bat}三振</span>
                     <span className="border-l pl-3 text-slate-700">OPS <span className="font-black">{p.ops?.toFixed(3)}</span></span>
                     <span>wOBA <span className="font-black">{formatMainStat('woba', p.woba || 0)}</span></span>
-                    <span>wRC+ <span className="font-black text-orange-600">{p.wrc_plus}</span></span>
-                    <span className="ml-auto text-blue-600 bg-blue-50 px-2 py-0.5 rounded">WAR {p.war > 0 ? `+${p.war.toFixed(1)}` : p.war.toFixed(1)}</span>
+                    <span>wRC+ <span className={`font-black ${leagueLevel === '2' ? 'text-green-600' : 'text-orange-600'}`}>{p.wrc_plus}</span></span>
+                    <span className={`ml-auto px-2 py-0.5 rounded ${leagueLevel === '2' ? 'text-green-700 bg-green-50' : 'text-blue-600 bg-blue-50'}`}>WAR {p.war > 0 ? `+${p.war.toFixed(1)}` : p.war.toFixed(1)}</span>
                   </>
                 ) : (
                   <>
@@ -628,8 +617,8 @@ function Leaderboard() {
                     <span>{p.so_pitch}奪三振</span>
                     <span className="border-l pl-3 text-slate-700">WHIP <span className="font-black">{p.whip?.toFixed(2)}</span></span>
                     <span>K/9 <span className="font-black">{p.k9?.toFixed(2)}</span></span>
-                    <span>K-BB <span className="font-black text-orange-600">{p.k_bb_pct?.toFixed(1)}%</span></span>
-                    <span className="ml-auto text-red-600 bg-red-50 px-2 py-0.5 rounded">WAR {p.war > 0 ? `+${p.war.toFixed(1)}` : p.war.toFixed(1)}</span>
+                    <span>K-BB <span className={`font-black ${leagueLevel === '2' ? 'text-green-600' : 'text-orange-600'}`}>{p.k_bb_pct?.toFixed(1)}%</span></span>
+                    <span className={`ml-auto px-2 py-0.5 rounded ${leagueLevel === '2' ? 'text-green-700 bg-green-50' : 'text-red-600 bg-red-50'}`}>WAR {p.war > 0 ? `+${p.war.toFixed(1)}` : p.war.toFixed(1)}</span>
                   </>
                 )}
               </div>
