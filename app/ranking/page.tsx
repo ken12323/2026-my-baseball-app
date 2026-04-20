@@ -172,11 +172,19 @@ function Leaderboard() {
         // ★ 追加：試合数の取得は、常に野手テーブルから行う
         const gamesTable = leagueLevel === '2' ? 'farm_batting_stats' : 'batting_stats';
         
-        const [{ data: statsData }, { data: playersData }, { data: gamesData }] = await Promise.all([
+        // ★★★ デバッグ対応：エラー情報を受け取るように変更 ★★★
+        const [{ data: statsData, error: statsError }, { data: playersData }, { data: gamesData, error: gamesError }] = await Promise.all([
           supabase.from(targetTable).select('*').eq('年度', 2026),
           supabase.from('players').select('*'),
           supabase.from(gamesTable).select('所属球団, 試合').eq('年度', 2026) // ★ 修正：gamesTableから「試合」だけを取得
         ]);
+
+        // ★★★ デバッグ情報（F12キーのConsoleで確認できます） ★★★
+        console.log("=== 🔍 デバッグ情報 ===");
+        console.log("取得テーブル:", targetTable);
+        console.log("statsData 取得件数:", statsData?.length, "エラー詳細:", statsError);
+        console.log("gamesData 取得件数:", gamesData?.length, "エラー詳細:", gamesError);
+        // ★★★ ここまで ★★★
 
         if (!statsData || !playersData) return;
 
