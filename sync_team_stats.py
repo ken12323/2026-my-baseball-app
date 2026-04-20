@@ -15,9 +15,16 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUP
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# 1軍：YahooのチームID
 TEAMS = {
     "巨人": 1, "ヤクルト": 2, "横浜": 3, "中日": 4, "阪神": 5, "広島": 6,
     "西武": 7, "日ハム": 8, "千葉": 9, "オリックス": 11, "ソフトバンク": 12, "楽天": 376
+}
+
+# ファーム新球団：YahooのチームID
+FARM_ONLY_YAHOO_TEAMS = {
+    "オイシックス": 806, 
+    "ハヤテ": 23879
 }
 
 # 2軍：NPB公式サイトのチームコード
@@ -33,7 +40,6 @@ TEAM_NAME_MAP = {
     "オイシックス": "オイシックス", "ハヤテ": "くふうハヤテ"
 }
 
-# パークファクター (5年平均)
 PF_MAP = {
     '東京ヤクルト': 1.18, 'ヤクルト': 1.18, '北海道日本ハム': 1.15, '日ハム': 1.15,
     '横浜DeNA': 1.13, 'DeNA': 1.13, '千葉ロッテ': 1.05, 'ロッテ': 1.05,
@@ -75,17 +81,72 @@ def parse_salary_to_oku(val_str):
         total_man += float(man_match.group(1))
     return total_man / 10000.0
 
+
+# ★ 追加：新球団の選手を「farm_players」テーブルにのみ事前登録する安全機能
+def sync_farm_only_roster():
+    print("🔄 オイシックス・ハヤテの選手を探索し、専用マスター(farm_players)を更新します...")
+    
+    # 既存の全選手名を両方のマスターから取得（二重登録を完全防止）
+    res_main = supabase.table("players").select("player_name").execute()
+    res_farm = supabase.table("farm_players").select("player_name").execute()
+    
+    existing_names = set()
+    for r in (res_main.data + res_farm.data):
+        clean = re.sub(r'\s+', '', unicodedata.normalize('NFKC', r["player_name"]))
+        existing_names.add(clean)
+        
+    new_players = []
+    for team_name, team_id in FARM_ONLY_YAHOO_TEAMS.items():
+        url = f"https://baseball.yahoo.co.jp/npb/teams/{team_id}/players"
+        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        soup = BeautifulSoup(res.content, "html.parser")
+        
+        for a in soup.find_all("a", href=re.compile(r"/npb/player/(\d+)/top")):
+            match = re.search(r"/npb/player/(\d+)/top", a["href"])
+            if not match: continue
+            
+            yahoo_id = match.group(1).zfill(8)
+            
+            # 先頭の背番号やスペースを除去して純粋な名前にする
+            raw_text = a.text.strip()
+            clean_name = re.sub(r'^[\d\.\s]+', '', raw_text)
+            clean_name = re.sub(r'\s+', '', unicodedata.normalize('NFKC', clean_name))
+            
+            # すでに1軍マスターやファームマスターにいる選手（元NPB選手など）はスルー
+            if clean_name in existing_names:
+                continue
+                
+            new_players.append({
+                "player_id": yahoo_id,       # 主キーとしてYahooIDを使用
+                "sportsnavi_id": yahoo_id,   # あなたの用意した神カラムにも登録！
+                "player_name": clean_name,
+                "team_name": TEAM_NAME_MAP.get(team_name, team_name)
+            })
+            existing_names.add(clean_name)
+            
+    if new_players:
+        # ★ 1軍の players テーブルには絶対触れず、farm_players にのみ安全にInsert！
+        for i in range(0, len(new_players), 50):
+            supabase.table("farm_players").insert(new_players[i:i+50]).execute()
+        print(f"✅ 新規ファーム専用選手 {len(new_players)} 名を 'farm_players' テーブルに安全に登録しました！")
+    else:
+        print("✅ 新規ファーム選手はいませんでした（farm_playersは最新です）。")
+
+
 MASTER_PLAYER_MAP = {}
 def fetch_master():
-    res = supabase.table("players").select("player_id, player_name, salary_estimated").execute()
-    for p in res.data:
+    # ★ 両方のマスターテーブルからデータをメモリに合流させる（計算処理用）
+    res_main = supabase.table("players").select("player_id, player_name, salary_estimated").execute()
+    res_farm = supabase.table("farm_players").select("player_id, player_name, salary_estimated").execute()
+    
+    for p in (res_main.data + res_farm.data):
         name = re.sub(r'\s+', '', unicodedata.normalize('NFKC', p["player_name"]))
         MASTER_PLAYER_MAP[name] = {
             "id": str(p["player_id"]).zfill(8),
             "salary_oku": parse_salary_to_oku(p.get("salary_estimated", ""))
         }
 
-# --- 1軍スクレイパー (あなたの元のコードと完全に同一) ---
+
 def scrape_yahoo_first_team(team_name, team_id, mode):
     url = f"https://baseball.yahoo.co.jp/npb/teams/{team_id}/{mode}"
     res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -129,7 +190,7 @@ def scrape_yahoo_first_team(team_name, team_id, mode):
         player_list.append(s)
     return player_list
 
-# --- 2軍スクレイパー (NPB公式専用・絶対安全仕様) ---
+
 def scrape_npb_farm(team_name, team_code, mode):
     prefix = "idb2" if mode == "batting" else "idp2"
     url = f"https://npb.jp/bis/2026/stats/{prefix}_{team_code}.html"
@@ -141,7 +202,6 @@ def scrape_npb_farm(team_name, team_code, mode):
         th_elements = table.find_all("th")
         if not th_elements: continue
         
-        # ⚠️トラップ対策：改行やスペースを完全に除去してカラム名を取得
         cols = [re.sub(r'\s+', '', unicodedata.normalize('NFKC', th.text)) for th in th_elements]
         if "選手" not in cols: continue
         
@@ -149,7 +209,6 @@ def scrape_npb_farm(team_name, team_code, mode):
             tds = row.find_all("td")
             if not tds or len(tds) != len(cols): continue
             
-            # ⚠️トラップ対策：名前の先頭のアスタリスク(*)等を除去
             raw_name = tds[cols.index("選手")].text
             name = re.sub(r'[\*\s　]+', '', unicodedata.normalize('NFKC', raw_name))
             
@@ -168,7 +227,6 @@ def scrape_npb_farm(team_name, team_code, mode):
                 c = cols[i]
                 val = td.text.strip().replace('-', '0')
                 
-                # ⚠️トラップ対策：NPB独自のカラム名を統一
                 if c == "選手": continue
                 if c == "敗北": c = "敗戦"
                 if c == "完封勝": c = "完封"
@@ -198,7 +256,6 @@ def process_league(teams_dict, is_farm=False):
         print("データが取得できませんでした。")
         return
 
-    # --- リーグ平均の算出 (wRC+用) ---
     total_pa = sum(b.get("打席", 0) for b in batters)
     total_runs = sum(b.get("得点", 0) for b in batters)
     lgR_PA = total_runs / total_pa if total_pa > 0 else 0
@@ -211,7 +268,6 @@ def process_league(teams_dict, is_farm=False):
     total_hr = sum(b.get("本塁打", 0) for b in batters)
     lgwOBA = (0.7*total_bb + 0.72*total_hbp + 0.88*(total_h - total_2b - total_3b - total_hr) + 1.24*total_2b + 1.56*total_3b + 2.05*total_hr) / total_pa if total_pa > 0 else 0
 
-    # --- 野手指標計算 (あなたが動かしていた元のコードと完全に同一) ---
     for b in batters:
         pa = b.get("打席", 0)
         ab = max(b.get("打数", 0), 1)
@@ -243,7 +299,6 @@ def process_league(teams_dict, is_farm=False):
             b["K%"] = round((k / pa) * 100, 1)
             b["BB%"] = round((bb / pa) * 100, 1)
             
-            # ロマン度計算
             if b.get("ISOp", 0) < 0.150:
                 b["roman"] = 0.0
             else:
@@ -252,7 +307,6 @@ def process_league(teams_dict, is_farm=False):
             b["cospa"] = round(b["野手WAR"] / sal_oku, 2) if sal_oku > 0 else 0.0
             b["ランク"] = "S" if b["野手WAR"] > 3.0 else "A" if b["野手WAR"] > 1.0 else "B"
 
-    # --- 投手指標計算 (あなたが動かしていた元のコードと完全に同一) ---
     for p in pitchers:
         ip = format_ip(p.get("投球回", "0"))
         games = p.get("登板", 0)
@@ -296,7 +350,6 @@ def process_league(teams_dict, is_farm=False):
             p["cospa"] = round(p["投手WAR"] / sal_oku, 2) if sal_oku > 0 else 0.0
             p["ランク"] = "S" if p["投手WAR"] > 3.0 else "A" if p["投手WAR"] > 1.0 else "B"
 
-    # --- DB保存 ---
     table_b = "farm_batting_stats" if is_farm else "batting_stats"
     table_p = "farm_pitching_stats" if is_farm else "pitching_stats"
     
@@ -309,13 +362,22 @@ def process_league(teams_dict, is_farm=False):
     prefix = "ファーム（2軍）" if is_farm else "1軍"
     print(f"✅ {prefix}の全指標計算と保存が完了しました！")
 
+
 def main():
+    # 1. まずは安全に、新球団の選手のみを「farm_players」に事前同期
+    sync_farm_only_roster()
+    
+    # 2. マスターデータを最新状態でメモリに読み込み
     fetch_master()
+    
+    # 3. 1軍データの処理
     print("🚀 1軍データの処理を開始します...")
     process_league(TEAMS, is_farm=False)
     
+    # 4. ファーム（2軍）データの処理
     print("🚀 ファーム（2軍）データの処理を開始します...")
     process_league(NPB_FARM_TEAMS, is_farm=True)
+
 
 if __name__ == "__main__":
     main()
