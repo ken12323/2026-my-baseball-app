@@ -6,7 +6,7 @@ import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 
 // --- 1. 型定義 ---
-type LeagueLevel = '1' | '2'; // ★追加: 1軍か2軍か
+type LeagueLevel = '1' | '2'; 
 type League = 'ALL' | 'Central' | 'Pacific';
 type Role = 'hitter' | 'pitcher';
 type FilterType = 'qualified' | 'half' | 'all';
@@ -38,7 +38,7 @@ interface PlayerRank {
 
 const CENTRAL_TEAMS = ['阪神', '広島', 'DeNA', '巨人', 'ヤクルト', '中日'];
 const PACIFIC_TEAMS = ['オリックス', 'ロッテ', 'ソフトバンク', '楽天', '西武', '日本ハム'];
-const FARM_ONLY_TEAMS = ['オイシックス', 'くふうハヤテ']; // ★追加: 2軍専用球団
+const FARM_ONLY_TEAMS = ['オイシックス', 'くふうハヤテ']; 
 
 const getTeamInfo = (teamName: string): { league: League | 'Other', shortName: string } => {
   const cleanTeam = String(teamName).replace(/[\s　]+/g, '');
@@ -56,7 +56,6 @@ const getTeamInfo = (teamName: string): { league: League | 'Other', shortName: s
   if (cleanTeam.includes('西武') || cleanTeam.includes('ライオンズ')) return { league: 'Pacific', shortName: '西武' };
   if (cleanTeam.includes('日本ハム') || cleanTeam.includes('ファイターズ')) return { league: 'Pacific', shortName: '日本ハム' };
   
-  // ★追加: 2軍球団の判定
   if (cleanTeam.includes('オイシックス') || cleanTeam.includes('新潟')) return { league: 'Other', shortName: 'オイシックス' };
   if (cleanTeam.includes('ハヤテ') || cleanTeam.includes('静岡')) return { league: 'Other', shortName: 'くふうハヤテ' };
   
@@ -131,7 +130,7 @@ function Leaderboard() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const leagueLevel = (searchParams.get('level') as LeagueLevel) || '1'; // ★追加: 1軍/2軍パラメータ
+  const leagueLevel = (searchParams.get('level') as LeagueLevel) || '1'; 
   const role = (searchParams.get('role') as Role) || 'hitter';
   const league = (searchParams.get('league') as League) || 'ALL';
   const sortKey = searchParams.get('sort') || 'war';
@@ -164,36 +163,26 @@ function Leaderboard() {
       try {
         setLoading(true);
         
-        // ★ 1軍と2軍で取得するテーブルを切り替え！
         const targetTable = role === 'hitter' 
           ? (leagueLevel === '2' ? 'farm_batting_stats' : 'batting_stats')
           : (leagueLevel === '2' ? 'farm_pitching_stats' : 'pitching_stats');
 
-        // ★ 追加：試合数の取得は、常に野手テーブルから行う
         const gamesTable = leagueLevel === '2' ? 'farm_batting_stats' : 'batting_stats';
         
-        // ★★★ デバッグ対応：エラー情報を受け取るように変更 ★★★
         const [{ data: statsData, error: statsError }, { data: playersData }, { data: gamesData, error: gamesError }] = await Promise.all([
           supabase.from(targetTable).select('*').eq('年度', 2026),
           supabase.from('players').select('*'),
-          supabase.from(gamesTable).select('所属球団, 試合').eq('年度', 2026) // ★ 修正：gamesTableから「試合」だけを取得
+          supabase.from(gamesTable).select('所属球団, 試合').eq('年度', 2026) 
         ]);
-
-        // ★★★ デバッグ情報（F12キーのConsoleで確認できます） ★★★
-        console.log("=== 🔍 デバッグ情報 ===");
-        console.log("取得テーブル:", targetTable);
-        console.log("statsData 取得件数:", statsData?.length, "エラー詳細:", statsError);
-        console.log("gamesData 取得件数:", gamesData?.length, "エラー詳細:", gamesError);
-        // ★★★ ここまで ★★★
 
         if (!statsData || !playersData) return;
 
         const teamGames: Record<string, number> = {};
-        let globalMaxGames = leagueLevel === '2' ? 100 : 143; // ファームは一旦MAX100程度に仮置き
+        let globalMaxGames = leagueLevel === '2' ? 100 : 143; 
         if (gamesData) {
           gamesData.forEach((row: any) => {
             const t = String(row.所属球団);
-            const g = parseInt(row.試合) || 0; // ★ 修正：「登板」を削除
+            const g = parseInt(row.試合) || 0; 
             if (!teamGames[t] || g > teamGames[t]) teamGames[t] = g;
           });
           const maxVals = Object.values(teamGames);
@@ -247,13 +236,17 @@ function Leaderboard() {
             const pa = toF(stat.打席);
             if (pa === 0) return;
 
-            // ファームの規定打席は「試合数 × 2.7」
             const multiplier = leagueLevel === '2' ? 2.7 : 3.1;
             const is_qualified = pa >= Math.floor(teamGameCount * multiplier);
             const is_half_qualified = pa >= Math.floor((teamGameCount * multiplier) / 2);
 
-            if (filterType === 'qualified' && !is_qualified) return;
-            if (filterType === 'half' && !is_half_qualified) return;
+            // ★ 修正箇所：割合・平均指標の時のみ、規定打席による足切りを行う
+            // ※本塁打、安打、打点、WARなどの積み上げ指標の時はフィルターを強制無視する
+            const isRateStat = ['avg', 'ops', 'woba', 'isop', 'wrc_plus', 'babip', 'roman', 'cospa'].includes(sortKey);
+            if (isRateStat) {
+              if (filterType === 'qualified' && !is_qualified) return;
+              if (filterType === 'half' && !is_half_qualified) return;
+            }
 
             processed.push({
               player_id: safeId,
@@ -292,13 +285,17 @@ function Leaderboard() {
             if (posFilter === 'starter' && starts < games / 2) return;
             if (posFilter === 'reliever' && starts >= games / 2) return;
 
-            // ファームの規定投球回は「試合数 × 0.8」
             const multiplier = leagueLevel === '2' ? 0.8 : 1.0;
             const is_qualified = ip >= (teamGameCount * multiplier);
             const is_half_qualified = ip >= ((teamGameCount * multiplier) / 2);
 
-            if (filterType === 'qualified' && !is_qualified) return;
-            if (filterType === 'half' && !is_half_qualified) return;
+            // ★ 修正箇所：割合・平均指標の時のみ、規定投球回による足切りを行う
+            // ※勝利、セーブ、奪三振、WARなどの積み上げ指標の時はフィルターを強制無視する
+            const isPitchRateStat = ['era', 'whip', 'k9', 'bb9', 'k_bb_pct', 'fip', 'unluck', 'babip', 'cospa'].includes(sortKey);
+            if (isPitchRateStat) {
+              if (filterType === 'qualified' && !is_qualified) return;
+              if (filterType === 'half' && !is_half_qualified) return;
+            }
 
             processed.push({
               player_id: safeId,
@@ -357,7 +354,7 @@ function Leaderboard() {
     const params = new URLSearchParams(searchParams.toString());
     params.set(key, value);
     if (key === 'level') {
-      params.set('team', 'ALL'); // 1軍/2軍切り替え時はチーム絞り込みをリセット
+      params.set('team', 'ALL'); 
       params.set('league', 'ALL');
     }
     if (key === 'role') {
@@ -436,7 +433,6 @@ function Leaderboard() {
     return null;
   };
 
-  // ★ 2軍の時は「オイシックス」「ハヤテ」をチーム一覧に含める
   const displayTeams = leagueLevel === '2' 
     ? [...CENTRAL_TEAMS, ...PACIFIC_TEAMS, ...FARM_ONLY_TEAMS]
     : (league === 'Central' ? CENTRAL_TEAMS : league === 'Pacific' ? PACIFIC_TEAMS : [...CENTRAL_TEAMS, ...PACIFIC_TEAMS]);
@@ -456,7 +452,6 @@ function Leaderboard() {
       <div className="bg-white rounded-2xl shadow-xl border-t-8 border-orange-500 p-5 mb-6">
         <div className="flex flex-col gap-4">
           
-          {/* ★ 追加：1軍・ファーム切り替えトグル */}
           <div className="flex bg-slate-100 p-1.5 rounded-xl mb-2">
             <button 
               onClick={() => updateParam('level', '1')} 
@@ -475,7 +470,6 @@ function Leaderboard() {
             <button onClick={() => updateParam('role', 'pitcher')} className={`flex-1 py-2.5 rounded-lg text-xs font-black transition-all ${role === 'pitcher' ? 'bg-red-600 text-white shadow-md' : 'text-slate-400'}`}>投手ランキング</button>
           </div>
 
-          {/* 1軍の時のみリーグ絞り込みを表示 */}
           {leagueLevel === '1' && (
             <div className="flex gap-2">
               {(['ALL', 'Central', 'Pacific'] as League[]).map(l => (
@@ -497,7 +491,6 @@ function Leaderboard() {
             ))}
           </div>
 
-          {/* ポジション・投打・経歴・規定フィルター */}
           <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
             <button onClick={() => updateParam('pos', 'all')} className={`whitespace-nowrap px-4 py-1.5 rounded-full text-[10px] font-black transition-all ${posFilter === 'all' ? 'bg-slate-800 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200'}`}>全ポジション</button>
             {role === 'hitter' ? (
