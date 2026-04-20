@@ -107,13 +107,27 @@ def sync_farm_only_roster():
             
             yahoo_id = match.group(1).zfill(8)
             
-            # 先頭の背番号やスペースを除去して純粋な名前にする
-            raw_text = a.text.strip()
-            clean_name = re.sub(r'^[\d\.\s]+', '', raw_text)
-            clean_name = re.sub(r'\s+', '', unicodedata.normalize('NFKC', clean_name))
+            # ⚠️対策1: HTML内のテキストをパーツごとに分割取得 (例: ['41', '上村 知輝', 'ウエムラ トモキ'])
+            texts = list(a.stripped_strings)
+            if not texts: continue
+            
+            # ⚠️対策2: 監督・コーチの完全除外（ただし「選手兼任コーチ」は残す）
+            is_coach = any(('監督' in t or 'コーチ' in t) and '選手' not in t for t in texts)
+            if is_coach:
+                continue
+                
+            # ⚠️対策3: 背番号(数字のみ)をスキップし、純粋な「漢字の名前」だけを抽出
+            raw_name = ""
+            for t in texts:
+                if re.match(r'^[\d\.]+$', t): # 背番号など数字のみの要素はスキップ
+                    continue
+                raw_name = t # 最初の数字以外の文字列が名前
+                break
+                
+            clean_name = re.sub(r'\s+', '', unicodedata.normalize('NFKC', raw_name))
             
             # すでに1軍マスターやファームマスターにいる選手（元NPB選手など）はスルー
-            if clean_name in existing_names:
+            if not clean_name or clean_name in existing_names:
                 continue
                 
             new_players.append({
