@@ -168,11 +168,14 @@ function Leaderboard() {
         const targetTable = role === 'hitter' 
           ? (leagueLevel === '2' ? 'farm_batting_stats' : 'batting_stats')
           : (leagueLevel === '2' ? 'farm_pitching_stats' : 'pitching_stats');
+
+        // ★ 追加：試合数の取得は、常に野手テーブルから行う
+        const gamesTable = leagueLevel === '2' ? 'farm_batting_stats' : 'batting_stats';
         
         const [{ data: statsData }, { data: playersData }, { data: gamesData }] = await Promise.all([
           supabase.from(targetTable).select('*').eq('年度', 2026),
           supabase.from('players').select('*'),
-          supabase.from(targetTable).select('所属球団, 試合, 登板').eq('年度', 2026) // チーム別試合数も動的に
+          supabase.from(gamesTable).select('所属球団, 試合').eq('年度', 2026) // ★ 修正：gamesTableから「試合」だけを取得
         ]);
 
         if (!statsData || !playersData) return;
@@ -182,7 +185,7 @@ function Leaderboard() {
         if (gamesData) {
           gamesData.forEach((row: any) => {
             const t = String(row.所属球団);
-            const g = parseInt(row.試合 || row.登板) || 0;
+            const g = parseInt(row.試合) || 0; // ★ 修正：「登板」を削除
             if (!teamGames[t] || g > teamGames[t]) teamGames[t] = g;
           });
           const maxVals = Object.values(teamGames);
