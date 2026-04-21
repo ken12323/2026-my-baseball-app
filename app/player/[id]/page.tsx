@@ -28,7 +28,9 @@ const PARK_FACTORS: Record<string, number> = {
   'オリックス': 0.95,
   '東北楽天': 0.91, '楽天': 0.91,
   '阪神': 0.86,
-  '中日': 0.84
+  '中日': 0.84,
+  // ★追加：ファームチームのパークファクター（暫定1.00）
+  'オイシックス': 1.00, 'くふうハヤテ': 1.00, 'ハヤテ': 1.00
 };
 
 const getRank = (value: number, type: 'FIP' | 'wRC+' | 'WAR') => {
@@ -89,7 +91,8 @@ export default function PlayerDetail() {
   };
 
   const calcSaber = (row: any, type: 'P' | 'B') => {
-    const yearData = lgStats[row.年度];
+    // 1軍と2軍で計算に使うリーグ平均を出し分ける
+    const yearData = lgStats[`${row.年度}_${row.level}`];
     if (!yearData) return { fip: '-', war: '0.0', woba: 0, wrcPlus: 0, iso: 0, wrcPlusVal: 0, warVal: 0, ops: 0 };
     
     if (type === 'P') {
@@ -130,73 +133,115 @@ export default function PlayerDetail() {
         setLoading(true);
         const safeId = String(id).padStart(8, '0');
 
-        const { data: p } = await supabase.from('players').select('*').eq('player_id', safeId).single();
-        if (!p) { setLoading(false); return; }
-        setPlayer(p);
+        // ★統合検索：1軍を探し、見つからなければ2軍を探す
+        let pData = null;
+        const { data: p1 } = await supabase.from('players').select('*').eq('player_id', safeId).single();
+        if (p1) {
+          pData = p1;
+        } else {
+          const { data: p2 } = await supabase.from('farm_players').select('*').eq('player_id', safeId).single();
+          if (p2) pData = p2;
+        }
 
-        const nameNoSpace = p.player_name.replace(/\s+/g, '').split('').join('%');
+        if (!pData) { setLoading(false); return; }
+        setPlayer(pData);
+
+        const nameNoSpace = pData.player_name.replace(/\s+/g, '').split('').join('%');
         
-        const [allP, allB] = await Promise.all([
+        // ★統合取得：1軍と2軍の両テーブルから成績をフルフェッチ
+        const [allP1, allB1, allP2, allB2] = await Promise.all([
           supabase.from('pitching_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`),
-          supabase.from('batting_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`)
+          supabase.from('batting_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`),
+          supabase.from('farm_pitching_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`),
+          supabase.from('farm_batting_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`)
         ]);
 
         const statsMap = new Map();
-        const bData = allB.data || [];
-        const pData = allP.data || [];
 
-        bData.forEach(bStat => {
-          const year = Number(bStat.年度);
-          statsMap.set(year, { 
-            年度: year, 
-            所属球団: bStat.所属球団 || p.team_name, 
-            hasBatting: true, 
-            hasPitching: false,
-            b: bStat, 
-            p: {} 
+        // データをMapに統合する関数（level: 1=1軍, 2=2軍）
+        // ★修正1：引数の型に「| null」を追加して、nullが来ても許容するようにします
+        const processStats = (data: any[] | null, isPitching: boolean, level: number) => {
+          (data || []).forEach((stat: any) => {
+            const year = Number(stat.年度);
+            const key = `${year}_${level}`;
+            const existing = statsMap.get(key) || { 
+              年度: year, 
+              level,
+              所属球団: stat.所属球団 || pData.team_name, 
+              hasBatting: false, 
+              hasPitching: false,
+              b: {}, p: {} 
+            };
+            if (isPitching) {
+              existing.hasPitching = true;
+              existing.p = stat;
+            } else {
+              existing.hasBatting = true;
+              existing.b = stat;
+            }
+            statsMap.set(key, existing);
           });
-        });
+        };
 
-        pData.forEach(pStat => {
-          const year = Number(pStat.年度);
-          const existing = statsMap.get(year) || { 年度: year, 所属球団: pStat.所属球団 || p.team_name, hasBatting: false, b: {} };
-          statsMap.set(year, { 
-            ...existing, 
-            hasPitching: true, 
-            p: pStat 
-          });
-        });
+        // ★修正2：呼び出し側でも「もしnullなら空っぽの配列（[]）を渡す」として完全に防ぎます
+        processStats(allB1.data || [], false, 1);
+        processStats(allP1.data || [], true, 1);
+        processStats(allB2.data || [], false, 2);
+        processStats(allP2.data || [], true, 2);
 
-        const merged = Array.from(statsMap.values()).sort((a, b) => b.年度 - a.年度);
+        // 年度降順、同じ年度なら1軍優先でソート
+        const merged = Array.from(statsMap.values()).sort((a: any, b: any) => {
+          if (b.年度 !== a.年度) return b.年度 - a.年度;
+          return a.level - b.level;
+        });
         setMergedStats(merged);
 
-        const yearsNum = merged.map(s => Number(s.年度));
-        const [{ data: lgB }, { data: lgP }] = await Promise.all([
-          supabase.from('batting_stats').select('*').in('年度', yearsNum),
-          supabase.from('pitching_stats').select('*').in('年度', yearsNum)
-        ]);
+        // ★リーグスタッツ（Saber計算用）の取得
+        const yearsNum1 = merged.filter((s: any) => s.level === 1).map((s: any) => Number(s.年度));
+        const yearsNum2 = merged.filter((s: any) => s.level === 2).map((s: any) => Number(s.年度));
 
-        const statsByYear: Record<string, any> = {};
-        yearsNum.forEach(year => {
-          const yearB = lgB?.filter(r => Number(r.年度) === year) || [];
-          const yearP = lgP?.filter(r => Number(r.年度) === year) || [];
-          const sumPA = yearB.reduce((acc, r) => acc + toF(r.打席), 0) || 1;
-          const sumIP = yearP.reduce((acc, r) => acc + formatIP(r.投球回), 0) || 1;
-          const sumER = yearP.reduce((acc, r) => acc + toF(r.自責点), 0);
-          statsByYear[String(year)] = { 
-            lgwOBA: (0.7 * yearB.reduce((acc, r) => acc + toF(r.四球), 0) + 0.72 * yearB.reduce((acc, r) => acc + toF(r.死球), 0) + 0.9 * (yearB.reduce((acc, r) => acc + toF(r.安打), 0) - yearB.reduce((acc, r) => acc + (toF(r.二塁打)+toF(r.三塁打)+toF(r.本塁打)), 0)) + 1.25 * yearB.reduce((acc, r) => acc + toF(r.二塁打), 0) + 1.6 * yearB.reduce((acc, r) => acc + toF(r.三塁打), 0) + 2.0 * yearB.reduce((acc, r) => acc + toF(r.本塁打), 0)) / sumPA, 
-            lgFIP_C: (sumER * 9 / sumIP) - (13 * yearP.reduce((acc, r) => acc + toF(r.本塁打), 0) + 3 * (yearP.reduce((acc, r) => acc + toF(r.四球), 0) + yearP.reduce((acc, r) => acc + toF(r.死球), 0)) - 2 * yearP.reduce((acc, r) => acc + toF(r.三振), 0)) / sumIP, 
-            lgR_PA: yearB.reduce((acc, r) => acc + toF(r.得点), 0) / sumPA, 
-            lgERA: (sumER * 9 / sumIP)
-          };
-        });
-        setLgStats(statsByYear);
+        const queries = [];
+        if (yearsNum1.length > 0) {
+          queries.push(supabase.from('batting_stats').select('*').in('年度', yearsNum1));
+          queries.push(supabase.from('pitching_stats').select('*').in('年度', yearsNum1));
+        } else {
+          queries.push(Promise.resolve({data: []}), Promise.resolve({data: []}));
+        }
+        if (yearsNum2.length > 0) {
+          queries.push(supabase.from('farm_batting_stats').select('*').in('年度', yearsNum2));
+          queries.push(supabase.from('farm_pitching_stats').select('*').in('年度', yearsNum2));
+        } else {
+          queries.push(Promise.resolve({data: []}), Promise.resolve({data: []}));
+        }
+
+        const [resB1, resP1, resB2, resP2] = await Promise.all(queries);
+
+        const statsByKey: Record<string, any> = {};
+        const calcLg = (years: number[], lgB: any, lgP: any, level: number) => {
+          years.forEach(year => {
+            const yearB = lgB?.filter((r: any) => Number(r.年度) === year) || [];
+            const yearP = lgP?.filter((r: any) => Number(r.年度) === year) || [];
+            const sumPA = yearB.reduce((acc: number, r: any) => acc + toF(r.打席), 0) || 1;
+            const sumIP = yearP.reduce((acc: number, r: any) => acc + formatIP(r.投球回), 0) || 1;
+            const sumER = yearP.reduce((acc: number, r: any) => acc + toF(r.自責点), 0);
+            statsByKey[`${year}_${level}`] = { 
+              lgwOBA: (0.7 * yearB.reduce((acc: number, r: any) => acc + toF(r.四球), 0) + 0.72 * yearB.reduce((acc: number, r: any) => acc + toF(r.死球), 0) + 0.9 * (yearB.reduce((acc: number, r: any) => acc + toF(r.安打), 0) - yearB.reduce((acc: number, r: any) => acc + (toF(r.二塁打)+toF(r.三塁打)+toF(r.本塁打)), 0)) + 1.25 * yearB.reduce((acc: number, r: any) => acc + toF(r.二塁打), 0) + 1.6 * yearB.reduce((acc: number, r: any) => acc + toF(r.三塁打), 0) + 2.0 * yearB.reduce((acc: number, r: any) => acc + toF(r.本塁打), 0)) / sumPA, 
+              lgFIP_C: (sumER * 9 / sumIP) - (13 * yearP.reduce((acc: number, r: any) => acc + toF(r.本塁打), 0) + 3 * (yearP.reduce((acc: number, r: any) => acc + toF(r.四球), 0) + yearP.reduce((acc: number, r: any) => acc + toF(r.死球), 0)) - 2 * yearP.reduce((acc: number, r: any) => acc + toF(r.三振), 0)) / sumIP, 
+              lgR_PA: yearB.reduce((acc: number, r: any) => acc + toF(r.得点), 0) / sumPA, 
+              lgERA: (sumER * 9 / sumIP)
+            };
+          });
+        };
+        
+        calcLg([...new Set(yearsNum1)], resB1?.data || [], resP1?.data || [], 1);
+        calcLg([...new Set(yearsNum2)], resB2?.data || [], resP2?.data || [], 2);
+        setLgStats(statsByKey);
+        
       } catch (e) { console.error(e); } finally { setLoading(false); }
     }
     fetchData();
   }, [id]);
 
-  // ★修正：HelpIconに「目安（benchmark）」を追加し、デザインも読みやすく調整
   const HelpIcon = ({ id, text, benchmark }: { id: string, text: string, benchmark?: string }) => (
     <span className="relative inline-block ml-1 group">
       <button onClick={(e) => { e.stopPropagation(); setActiveTooltip(activeTooltip === id ? null : id); }} className="w-3.5 h-3.5 rounded-full bg-slate-200 hover:bg-blue-200 text-slate-500 hover:text-blue-700 text-[9px] flex items-center justify-center font-bold transition-colors">i</button>
@@ -216,7 +261,7 @@ export default function PlayerDetail() {
   );
 
   if (loading) return <div className="p-10 text-blue-600 bg-white min-h-screen font-black flex items-center justify-center animate-bounce text-2xl">データ読み込み中...</div>;
-  if (!player) return <div className="p-10">選手が見つかりません</div>;
+  if (!player) return <div className="p-10 text-center font-black text-slate-400 mt-20">選手が見つかりません</div>;
 
   const teamInitial = player.team_name.includes('阪神') ? 'T' : player.team_name.includes('中日') ? 'D' : 'P';
   const latest = mergedStats[0] || {};
@@ -232,19 +277,22 @@ export default function PlayerDetail() {
   const isPitcher = player.position_detail === '投手';
   const predictedHR = !isPitcher && toF(latestB.試合) > 0 ? Math.round((toF(latestB.本塁打) / toF(latestB.試合)) * 143) : 0;
   
-  const chartData = [...mergedStats].reverse().map((r, i) => {
+  const chartData = [...mergedStats].reverse().map((r: any, i: number) => {
     const isThisYear = i === mergedStats.length - 1;
+    // グラフのX軸で2軍成績を区別
+    const yearLabel = r.level === 2 ? `${r.年度}(2軍)` : `${r.年度}`;
+    
     if (isPitcher) {
       const era = toF(r.p.防御率);
       return { 
-        年度: r.年度, 
+        年度: yearLabel, 
         奪三振: toF(r.p.三振 || r.p.奪三振), 
         防御率: era > 90 ? null : era, 
         isPrediction: isThisYear 
       };
     } else {
       return { 
-        年度: r.年度, 
+        年度: yearLabel, 
         本塁打: isThisYear ? predictedHR : toF(r.b.本塁打), 
         OPS: toF(r.b.出塁率)+toF(r.b.長打率) || toF(r.b.OPS), 
         isPrediction: isThisYear 
@@ -256,14 +304,15 @@ export default function PlayerDetail() {
   const generationYear = getGeneration(birthDateStr);
   const bodyInfo = player.height && player.weight 
     ? `${player.height}cm ／ ${player.weight}kg` 
-    : 'データなし';
+    : '－';
 
+  // ★修正：「ドラフト：－」という表記にする
   const draftInfoNode = player.draft_year && player.draft_rank ? (
     <span className="text-sm font-black text-slate-700">
       <Link href={`/roots/draft/${player.draft_year}`} className="text-blue-600 hover:underline">{player.draft_year}年</Link>
       {' '}{player.is_developmental ? '育成' : 'ドラフト'}{player.draft_rank}位
     </span>
-  ) : <span className="text-sm font-black text-slate-700">ドラフト情報なし</span>;
+  ) : <span className="text-sm font-black text-slate-700">－</span>;
 
   const renderCareerInfo = () => {
     const items = [];
@@ -273,14 +322,14 @@ export default function PlayerDetail() {
     if (player.prev_team_2) items.push(<Link key="prev2" href={`/roots/previous_team/${encodeURIComponent(player.prev_team_2)}`} className="text-blue-600 hover:underline">{player.prev_team_2}</Link>);
     if (player.prev_team_3) items.push(<Link key="prev3" href={`/roots/previous_team/${encodeURIComponent(player.prev_team_3)}`} className="text-blue-600 hover:underline">{player.prev_team_3}</Link>);
     
-    if (items.length === 0) return <span className="text-sm font-black text-slate-700">経歴情報なし</span>;
+    if (items.length === 0) return <span className="text-sm font-black text-slate-700">－</span>;
   
     return (
       <span className="text-sm font-black text-slate-700 flex flex-wrap gap-x-1">
-        {items.map((item, i) => (
+        {items.map((item: any, i: number) => (
           <span key={i} className="flex items-center">
             {item}
-            {i < items.length - 1 && <span className="mx-1 text-slate-300">-</span>}
+            {i < items.length - 1 && <span className="mx-1 text-slate-300">－</span>}
           </span>
         ))}
       </span>
@@ -293,7 +342,7 @@ export default function PlayerDetail() {
         <h2 className="text-xl font-black italic border-l-8 border-green-600 pl-4 text-slate-900 uppercase tracking-tight">Batting Data</h2>
       </div>
       <div className="flex flex-col gap-3">
-        {mergedStats.filter(s => s.hasBatting).map((row, i) => {
+        {mergedStats.filter((s: any) => s.hasBatting).map((row: any, i: number) => {
           const s = calcSaber(row, 'B') as any;
           const isOpen = expandedB === i;
           return (
@@ -302,8 +351,12 @@ export default function PlayerDetail() {
                 onClick={() => setExpandedB(isOpen ? null : i)}
                 className={`w-full flex flex-col md:flex-row md:items-center justify-between p-4 cursor-pointer transition-colors ${isOpen ? 'bg-blue-50/50 rounded-t-xl' : 'hover:bg-slate-50 rounded-xl'}`}
               >
-                <div className="flex items-center gap-4 mb-3 md:mb-0">
-                  <span className="font-black text-xl text-slate-800">{row.年度}</span>
+                <div className="flex items-center gap-3 mb-3 md:mb-0">
+                  <span className="font-black text-xl text-slate-800">
+                    {row.年度} 
+                    {/* ★追加：2軍成績の場合は緑色のバッジを表示 */}
+                    {row.level === 2 && <span className="text-[10px] bg-green-600 text-white px-1.5 py-0.5 rounded-md ml-2 align-middle tracking-wider border border-green-700 shadow-sm">2軍</span>}
+                  </span>
                   <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-md">{row.所属球団}</span>
                 </div>
                 <div className="flex items-center justify-between md:justify-end gap-4 w-full md:w-auto text-sm font-black text-slate-700">
@@ -356,7 +409,7 @@ export default function PlayerDetail() {
         <h2 className="text-xl font-black italic border-l-8 border-blue-600 pl-4 text-slate-900 uppercase tracking-tight">Pitching Data</h2>
       </div>
       <div className="flex flex-col gap-3">
-        {mergedStats.filter(s => s.hasPitching).map((row, i) => {
+        {mergedStats.filter((s: any) => s.hasPitching).map((row: any, i: number) => {
           const s = calcSaber(row, 'P') as any;
           const ip = formatIP(row.p.投球回);
           
@@ -377,8 +430,12 @@ export default function PlayerDetail() {
                 onClick={() => setExpandedP(isOpen ? null : i)}
                 className={`w-full flex flex-col md:flex-row md:items-center justify-between p-4 cursor-pointer transition-colors ${isOpen ? 'bg-blue-50/50 rounded-t-xl' : 'hover:bg-slate-50 rounded-xl'}`}
               >
-                <div className="flex items-center gap-4 mb-3 md:mb-0">
-                  <span className="font-black text-xl text-slate-800">{row.年度}</span>
+                <div className="flex items-center gap-3 mb-3 md:mb-0">
+                  <span className="font-black text-xl text-slate-800">
+                    {row.年度}
+                    {/* ★追加：2軍成績の場合は緑色のバッジを表示 */}
+                    {row.level === 2 && <span className="text-[10px] bg-green-600 text-white px-1.5 py-0.5 rounded-md ml-2 align-middle tracking-wider border border-green-700 shadow-sm">2軍</span>}
+                  </span>
                   <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-md">{row.所属球団}</span>
                 </div>
                 <div className="flex items-center justify-between md:justify-end gap-4 w-full md:w-auto text-sm font-black text-slate-700">
@@ -444,8 +501,8 @@ export default function PlayerDetail() {
               <p className="text-blue-500 font-black text-xs md:text-sm mb-1">{player.team_name}</p>
               <h1 className="text-4xl md:text-5xl font-black text-blue-900 italic tracking-tighter mb-4">{player.player_name}</h1>
               <div className="flex gap-2">
-                <span className="bg-yellow-400 text-blue-900 text-[10px] md:text-xs font-black px-3 py-1 rounded-full">{player.position_detail}</span>
-                <span className="bg-gray-100 text-slate-500 text-[10px] md:text-xs font-black px-3 py-1 rounded-full border">{player.throws_bats}</span>
+                <span className="bg-yellow-400 text-blue-900 text-[10px] md:text-xs font-black px-3 py-1 rounded-full">{player.position_detail || '不明'}</span>
+                <span className="bg-gray-100 text-slate-500 text-[10px] md:text-xs font-black px-3 py-1 rounded-full border">{player.throws_bats || '－'}</span>
               </div>
             </div>
             <div className="flex flex-col items-center w-28 md:w-36 flex-shrink-0">
@@ -458,13 +515,11 @@ export default function PlayerDetail() {
           </div>
           <div className="grid grid-cols-2 gap-4 mt-4 text-center">
             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-              {/* ★修正: 投野で説明文を出し分ける */}
               <span className="text-[10px] font-black text-slate-400 block mb-2 uppercase">{isPitcher ? 'FIP' : 'wRC+'} <HelpIcon id="h1" text={isPitcher ? "被本塁打・与四死球・奪三振のみで評価した、運に左右されない防御率" : "球場や時代背景を補正し、打者が平均の何倍の得点を生み出したかを示す傑出度。"} benchmark={isPitcher ? "3.50で優秀な先発、2.00台でエース。" : "100が平均、120で優秀、140以上はMVP級の活躍。"}/></span>
               <div className={rankBadge(isPitcher ? getRank(toF(pSaber.fipVal), 'FIP') : getRank(toF(bSaber.wrcPlusVal), 'wRC+'))}>RANK</div>
               <p className="text-slate-900 text-3xl font-black mt-2">{isPitcher ? pSaber.fip : bSaber.wrcPlus}</p>
             </div>
             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-              {/* ★修正: 投野で説明文を出し分ける */}
               <span className="text-[10px] font-black text-slate-400 block mb-2 uppercase">{isPitcher ? '奪三振' : 'OPS'} <HelpIcon id="h2" text={isPitcher ? "投手が奪った三振の総数。圧倒的な投球能力を示す。" : "出塁率と長打率を足し合わせた、総合的な攻撃力を示す指標。"} benchmark={isPitcher ? "先発でシーズン100〜150個、200個でタイトル級。" : ".750で平均以上、.800で優秀、.900以上は球界を代表する強打者。"}/></span>
               <div className={rankBadge('S')}>STATUS</div>
               <p className="text-slate-900 text-3xl font-black mt-2">
@@ -489,7 +544,7 @@ export default function PlayerDetail() {
               <div className="flex items-baseline border-b border-slate-100 pb-2">
                 <span className="w-24 text-[11px] font-bold text-slate-400 shrink-0">生年月日</span>
                 <span className="text-sm font-black text-slate-700 flex items-center flex-wrap gap-2">
-                  {birthDateStr || '-'}
+                  {birthDateStr || '－'}
                   {generationYear && (
                     <Link href={`/roots/generation/${generationYear}`} className="text-[10px] text-blue-600 hover:underline bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md">
                       {generationYear}年度生まれ一覧
@@ -504,7 +559,7 @@ export default function PlayerDetail() {
                     <Link href={`/roots/hometown/${encodeURIComponent(player.hometown)}`} className="text-blue-600 hover:underline">
                       {player.hometown}
                     </Link>
-                  ) : '-'}
+                  ) : '－'}
                 </span>
               </div>
             </div>
@@ -516,11 +571,11 @@ export default function PlayerDetail() {
               </div>
               <div className="flex items-baseline border-b border-slate-100 pb-2">
                 <span className="w-24 text-[11px] font-bold text-slate-400 shrink-0">推定年俸</span>
-                <span className="text-sm font-black text-slate-700">{player.salary_estimated || '-'}</span>
+                <span className="text-sm font-black text-slate-700">{player.salary_estimated || '－'}</span>
               </div>
               <div className="flex items-baseline border-b border-slate-100 pb-2">
                 <span className="w-24 text-[11px] font-bold text-slate-400 shrink-0">血液型</span>
-                <span className="text-sm font-black text-slate-700">{player.blood_type ? `${player.blood_type}型` : '-'}</span>
+                <span className="text-sm font-black text-slate-700">{player.blood_type ? `${player.blood_type}型` : '－'}</span>
               </div>
             </div>
 
@@ -563,13 +618,13 @@ export default function PlayerDetail() {
         <section className="mb-20 space-y-8">
           {isPitcher ? (
             <>
-              {mergedStats.some(s => s.hasPitching) && renderPitchingAccordion()}
+              {mergedStats.some((s: any) => s.hasPitching) && renderPitchingAccordion()}
               {renderBattingAccordion()}
             </>
           ) : (
             <>
               {renderBattingAccordion()}
-              {mergedStats.some(s => s.hasPitching) && renderPitchingAccordion()}
+              {mergedStats.some((s: any) => s.hasPitching) && renderPitchingAccordion()}
             </>
           )}
         </section>
