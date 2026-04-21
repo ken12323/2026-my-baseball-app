@@ -18,20 +18,29 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 def parse_profile_text(text):
     return text.replace('\n', '').replace('\r', '').strip()
 
-def scrape_and_update_profiles(table_name):
-    print(f"🚀 {table_name} のプロフィール拡充を開始します...")
+def scrape_farm_profiles():
+    table_name = "farm_players"
+    print(f"🚀 {table_name} (オイシックス・ハヤテ専用) のプロフィール拡充を開始します...")
     
-    # ★ sync_team_stats.py と同じ一番シンプルな取得方法！
-    # birthdayも一緒に取得して、後からPythonで判定します
+    # 1. まずファームテーブルの全データを取得（接続先の状況確認も兼ねて）
     res = supabase.table(table_name).select("player_id, sportsnavi_id, player_name, birthday").execute()
-        
-    # ★ Python側で「sportsnavi_idがあり、かつbirthdayが空の選手」だけを抽出
+    total_records = len(res.data)
+    
+    # ★ ここで接続先DBの状況を可視化します
+    print(f"📊 DB接続確認: {table_name} テーブルには現在 {total_records} 件のデータがあります。")
+    
+    if total_records == 0:
+        print("⚠️ 警告: データが0件です！ローカルPCの .env.local が、GitHubで更新した本番DBと違う場所を指している可能性があります。")
+        return
+
+    # 2. sportsnavi_idがあり、かつbirthdayが空の選手だけを抽出
     players = [p for p in res.data if p.get("sportsnavi_id") and not p.get("birthday")]
     
     if not players:
-        print(f"✅ {table_name} に更新が必要な選手はいません。")
+        print(f"✅ {table_name} に更新が必要な選手はいません（全員取得済み）。")
         return
 
+    print(f"🔍 今回プロフィールを新規取得する対象者: {len(players)} 名")
     update_batch = []
     
     for p in players:
@@ -113,8 +122,8 @@ def scrape_and_update_profiles(table_name):
         print(f"🎉 {len(update_batch)} 名のプロフィール更新が完了しました！")
 
 def main():
-    scrape_and_update_profiles("farm_players")
-    scrape_and_update_profiles("players")
+    # ★ 1軍の players テーブルには絶対に触れないよう、呼び出しを削除しました ★
+    scrape_farm_profiles()
 
 if __name__ == "__main__":
     main()
