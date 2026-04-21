@@ -43,7 +43,6 @@ function RankingList() {
   const [loading, setLoading] = useState(true);
   const [displayDate, setDisplayDate] = useState('');
   
-  // ★ 追加：1軍/2軍の切り替え状態
   const [leagueType, setLeagueType] = useState<'1軍' | '2軍'>('1軍');
 
   useEffect(() => {
@@ -66,27 +65,22 @@ function RankingList() {
 
         const stats: Record<string, RankingRow> = {};
 
-        // ★ 追加：1軍/2軍のマスターデータを統合取得
         let playersData: any[] = [];
         if (leagueType === '2軍') {
-          // 2軍の場合は、1軍選手(調整中等)と2軍専用選手の両方を取得して結合
           const [res1, res2] = await Promise.all([
             supabase.from('players').select('*'),
             supabase.from('farm_players').select('*')
           ]);
           const combined = [...(res1.data || []), ...(res2.data || [])];
-          // IDで重複排除
           const map = new Map();
           combined.forEach(p => map.set(String(p.player_id).padStart(8, '0'), p));
           playersData = Array.from(map.values());
         } else {
-          // 1軍の場合は通常通り
           const { data } = await supabase.from('players').select('*');
           playersData = data || [];
         }
 
         if (period === 'season') {
-          // ★ 修正：リーグに応じて成績テーブルを切り替え
           const tableName = leagueType === '2軍' ? 'farm_batting_stats' : 'batting_stats';
           const { data: battingData, error } = await supabase.from(tableName).select('*').eq('年度', 2026);
 
@@ -136,7 +130,6 @@ function RankingList() {
             });
           }
         } else {
-          // ★ 修正：デイリー成績もリーグに応じてテーブルを切り替え
           const tableName = leagueType === '2軍' ? 'farm_daily_performance' : 'daily_performance';
           let query = supabase.from(tableName).select('*');
           if (period === 'today') query = query.eq('date', todayStr);
@@ -200,7 +193,7 @@ function RankingList() {
       }
     }
     fetchData();
-  }, [period, category, leagueType]); // ★ leagueType を依存配列に追加
+  }, [period, category, leagueType]);
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -214,36 +207,52 @@ function RankingList() {
         </Link>
       </div>
 
-      {/* ★ 追加：1軍/2軍の切り替えタブ */}
-      <div className="flex justify-center mb-6">
-        <div className="bg-slate-200 p-1 rounded-2xl flex gap-1 shadow-inner">
-          <button 
-            onClick={() => setLeagueType('1軍')}
-            className={`px-8 py-2.5 rounded-xl font-black text-sm transition-all ${leagueType === '1軍' ? 'bg-white text-blue-600 shadow-md' : 'text-slate-500 hover:bg-slate-300/50'}`}
-          >
-            1軍成績
-          </button>
-          <button 
-            onClick={() => setLeagueType('2軍')}
-            className={`px-8 py-2.5 rounded-xl font-black text-sm transition-all ${leagueType === '2軍' ? 'bg-white text-green-600 shadow-md' : 'text-slate-500 hover:bg-slate-300/50'}`}
-          >
-            2軍成績
-          </button>
-        </div>
-      </div>
-
-      {/* ★ 修正：選択中のリーグに応じてテーマカラー（枠線など）を切り替え */}
       <header className={`mb-6 bg-white p-6 rounded-2xl shadow-xl border-t-8 ${leagueType === '1軍' ? 'border-blue-900' : 'border-green-600'}`}>
         <div className="flex justify-between items-start mb-4">
           <div>
             <h1 className={`text-3xl font-black italic tracking-tighter leading-none mb-1.5 ${leagueType === '1軍' ? 'text-blue-900' : 'text-green-700'}`}>
-              BASEBALL <span className="text-red-600">ROOTS</span> <span className="text-sm text-slate-400 font-bold ml-1 tracking-widest">{leagueType}</span>
+              BASEBALL <span className="text-red-600">ROOTS</span> <span className="text-sm text-slate-400 font-bold ml-1 tracking-widest">{leagueType === '2軍' ? '2軍' : ''}</span>
             </h1>
             <p className="text-[10px] text-slate-500 font-bold tracking-tight">出身校や地元など、あらゆる「ルーツ」からプロ野球選手の現在地を比較。</p>
           </div>
+
+          {/* ★ 移動したタブ：ヘッダーの中央（PC表示時のみ） */}
+          <div className="hidden md:flex bg-slate-100 p-1 rounded-xl gap-1 shadow-inner shrink-0 self-center border border-slate-200">
+            <button 
+              onClick={() => setLeagueType('1軍')}
+              className={`px-6 py-2 rounded-lg font-black text-xs transition-all ${leagueType === '1軍' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:bg-slate-200/50'}`}
+            >
+              1軍成績
+            </button>
+            <button 
+              onClick={() => setLeagueType('2軍')}
+              className={`px-6 py-2 rounded-lg font-black text-xs transition-all ${leagueType === '2軍' ? 'bg-white text-green-600 shadow-sm' : 'text-slate-400 hover:bg-slate-200/50'}`}
+            >
+              2軍成績
+            </button>
+          </div>
+
           <div className="text-right">
             <p className={`text-[10px] font-bold uppercase tracking-widest ${leagueType === '1軍' ? 'text-blue-600' : 'text-green-600'}`}>{period} / {category}</p>
             <p className="text-[10px] text-slate-400 font-bold mt-1">{displayDate}</p>
+          </div>
+        </div>
+
+        {/* ★ 移動したタブ：ヘッダーの中央（モバイル表示時） */}
+        <div className="md:hidden flex justify-center mb-4 mt-2">
+          <div className="bg-slate-100 p-1 rounded-xl flex w-full gap-1 shadow-inner border border-slate-200">
+            <button 
+              onClick={() => setLeagueType('1軍')}
+              className={`flex-1 py-2 rounded-lg font-black text-xs transition-all ${leagueType === '1軍' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:bg-slate-200/50'}`}
+            >
+              1軍成績
+            </button>
+            <button 
+              onClick={() => setLeagueType('2軍')}
+              className={`flex-1 py-2 rounded-lg font-black text-xs transition-all ${leagueType === '2軍' ? 'bg-white text-green-600 shadow-sm' : 'text-slate-400 hover:bg-slate-200/50'}`}
+            >
+              2軍成績
+            </button>
           </div>
         </div>
         
