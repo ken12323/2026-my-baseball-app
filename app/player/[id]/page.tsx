@@ -575,7 +575,11 @@ export default function PlayerDetail() {
               </div>
               <div className="flex items-baseline border-b border-slate-100 pb-2">
                 <span className="w-24 text-[11px] font-bold text-slate-400 shrink-0">血液型</span>
-                <span className="text-sm font-black text-slate-700">{player.blood_type ? `${player.blood_type}型` : '－'}</span>
+                <span className="text-sm font-black text-slate-700">
+                  {player.blood_type 
+                    ? (String(player.blood_type).trim().includes('不明') ? '不明' : `${String(player.blood_type).trim()}型`) 
+                    : '－'}
+                </span>
               </div>
             </div>
 
