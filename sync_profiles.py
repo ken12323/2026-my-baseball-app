@@ -21,14 +21,12 @@ def parse_profile_text(text):
 def scrape_and_update_profiles(table_name):
     print(f"🚀 {table_name} のプロフィール拡充を開始します...")
     
-    # ★修正箇所：Python版の正しいフィルター構文（.not_ と .is_）に変更
-    res = supabase.table(table_name)\
-        .select("player_id, sportsnavi_id, player_name")\
-        .not_("sportsnavi_id", "is", "null")\
-        .is_("birthday", "null")\
-        .execute()
+    # ★ sync_team_stats.py と同じ一番シンプルな取得方法！
+    # birthdayも一緒に取得して、後からPythonで判定します
+    res = supabase.table(table_name).select("player_id, sportsnavi_id, player_name, birthday").execute()
         
-    players = res.data
+    # ★ Python側で「sportsnavi_idがあり、かつbirthdayが空の選手」だけを抽出
+    players = [p for p in res.data if p.get("sportsnavi_id") and not p.get("birthday")]
     
     if not players:
         print(f"✅ {table_name} に更新が必要な選手はいません。")
