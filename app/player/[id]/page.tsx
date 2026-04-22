@@ -29,7 +29,6 @@ const PARK_FACTORS: Record<string, number> = {
   '東北楽天': 0.91, '楽天': 0.91,
   '阪神': 0.86,
   '中日': 0.84,
-  // ★追加：ファームチームのパークファクター（暫定1.00）
   'オイシックス': 1.00, 'くふうハヤテ': 1.00, 'ハヤテ': 1.00
 };
 
@@ -77,6 +76,9 @@ export default function PlayerDetail() {
   
   const [expandedB, setExpandedB] = useState<number | null>(0);
   const [expandedP, setExpandedP] = useState<number | null>(0);
+  
+  // ★ 追加：1軍/2軍の切り替えタブ状態
+  const [leagueType, setLeagueType] = useState<'1軍' | '2軍'>('1軍');
 
   const dotFormat = (val: any) => {
     const s = toF(val).toFixed(3);
@@ -91,7 +93,6 @@ export default function PlayerDetail() {
   };
 
   const calcSaber = (row: any, type: 'P' | 'B') => {
-    // 1軍と2軍で計算に使うリーグ平均を出し分ける
     const yearData = lgStats[`${row.年度}_${row.level}`];
     if (!yearData) return { fip: '-', war: '0.0', woba: 0, wrcPlus: 0, iso: 0, wrcPlusVal: 0, warVal: 0, ops: 0 };
     
@@ -133,7 +134,6 @@ export default function PlayerDetail() {
         setLoading(true);
         const safeId = String(id).padStart(8, '0');
 
-        // ★統合検索：1軍を探し、見つからなければ2軍を探す
         let pData = null;
         const { data: p1 } = await supabase.from('players').select('*').eq('player_id', safeId).single();
         if (p1) {
@@ -148,7 +148,6 @@ export default function PlayerDetail() {
 
         const nameNoSpace = pData.player_name.replace(/\s+/g, '').split('').join('%');
         
-        // ★統合取得：1軍と2軍の両テーブルから成績をフルフェッチ
         const [allP1, allB1, allP2, allB2] = await Promise.all([
           supabase.from('pitching_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`),
           supabase.from('batting_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`),
@@ -158,8 +157,6 @@ export default function PlayerDetail() {
 
         const statsMap = new Map();
 
-        // データをMapに統合する関数（level: 1=1軍, 2=2軍）
-        // ★修正1：引数の型に「| null」を追加して、nullが来ても許容するようにします
         const processStats = (data: any[] | null, isPitching: boolean, level: number) => {
           (data || []).forEach((stat: any) => {
             const year = Number(stat.年度);
@@ -183,20 +180,22 @@ export default function PlayerDetail() {
           });
         };
 
-        // ★修正2：呼び出し側でも「もしnullなら空っぽの配列（[]）を渡す」として完全に防ぎます
         processStats(allB1.data || [], false, 1);
         processStats(allP1.data || [], true, 1);
         processStats(allB2.data || [], false, 2);
         processStats(allP2.data || [], true, 2);
 
-        // 年度降順、同じ年度なら1軍優先でソート
         const merged = Array.from(statsMap.values()).sort((a: any, b: any) => {
           if (b.年度 !== a.年度) return b.年度 - a.年度;
           return a.level - b.level;
         });
         setMergedStats(merged);
 
-        // ★リーグスタッツ（Saber計算用）の取得
+        // ★ 追加：1軍データがなく、2軍データがある選手は、初期タブを賢く「2軍」にする
+        if (!merged.some((s: any) => s.level === 1) && merged.some((s: any) => s.level === 2)) {
+          setLeagueType('2軍');
+        }
+
         const yearsNum1 = merged.filter((s: any) => s.level === 1).map((s: any) => Number(s.年度));
         const yearsNum2 = merged.filter((s: any) => s.level === 2).map((s: any) => Number(s.年度));
 
@@ -263,8 +262,12 @@ export default function PlayerDetail() {
   if (loading) return <div className="p-10 text-blue-600 bg-white min-h-screen font-black flex items-center justify-center animate-bounce text-2xl">データ読み込み中...</div>;
   if (!player) return <div className="p-10 text-center font-black text-slate-400 mt-20">選手が見つかりません</div>;
 
+  // ★ 追加：選択されているリーグ（タブ）のデータだけを抽出
+  const currentStats = mergedStats.filter((s: any) => s.level === (leagueType === '1軍' ? 1 : 2));
+
   const teamInitial = player.team_name.includes('阪神') ? 'T' : player.team_name.includes('中日') ? 'D' : 'P';
-  const latest = mergedStats[0] || {};
+  // 最新の成績も「選択中のリーグ」のものにする
+  const latest = currentStats[0] || {};
   const latestB = latest.b || {};
   const latestP = latest.p || {};
   
@@ -277,10 +280,10 @@ export default function PlayerDetail() {
   const isPitcher = player.position_detail === '投手';
   const predictedHR = !isPitcher && toF(latestB.試合) > 0 ? Math.round((toF(latestB.本塁打) / toF(latestB.試合)) * 143) : 0;
   
-  const chartData = [...mergedStats].reverse().map((r: any, i: number) => {
-    const isThisYear = i === mergedStats.length - 1;
-    // グラフのX軸で2軍成績を区別
-    const yearLabel = r.level === 2 ? `${r.年度}(2軍)` : `${r.年度}`;
+  // グラフも選択中のリーグのみを描画
+  const chartData = [...currentStats].reverse().map((r: any, i: number) => {
+    const isThisYear = i === currentStats.length - 1;
+    const yearLabel = `${r.年度}`;
     
     if (isPitcher) {
       const era = toF(r.p.防御率);
@@ -306,7 +309,6 @@ export default function PlayerDetail() {
     ? `${player.height}cm ／ ${player.weight}kg` 
     : '－';
 
-  // ★修正：「ドラフト：－」という表記にする
   const draftInfoNode = player.draft_year && player.draft_rank ? (
     <span className="text-sm font-black text-slate-700">
       <Link href={`/roots/draft/${player.draft_year}`} className="text-blue-600 hover:underline">{player.draft_year}年</Link>
@@ -342,7 +344,8 @@ export default function PlayerDetail() {
         <h2 className="text-xl font-black italic border-l-8 border-green-600 pl-4 text-slate-900 uppercase tracking-tight">Batting Data</h2>
       </div>
       <div className="flex flex-col gap-3">
-        {mergedStats.filter((s: any) => s.hasBatting).map((row: any, i: number) => {
+        {/* ★ 修正：currentStats だけをループする */}
+        {currentStats.filter((s: any) => s.hasBatting).map((row: any, i: number) => {
           const s = calcSaber(row, 'B') as any;
           const isOpen = expandedB === i;
           return (
@@ -354,8 +357,6 @@ export default function PlayerDetail() {
                 <div className="flex items-center gap-3 mb-3 md:mb-0">
                   <span className="font-black text-xl text-slate-800">
                     {row.年度} 
-                    {/* ★追加：2軍成績の場合は緑色のバッジを表示 */}
-                    {row.level === 2 && <span className="text-[10px] bg-green-600 text-white px-1.5 py-0.5 rounded-md ml-2 align-middle tracking-wider border border-green-700 shadow-sm">2軍</span>}
                   </span>
                   <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-md">{row.所属球団}</span>
                 </div>
@@ -409,7 +410,8 @@ export default function PlayerDetail() {
         <h2 className="text-xl font-black italic border-l-8 border-blue-600 pl-4 text-slate-900 uppercase tracking-tight">Pitching Data</h2>
       </div>
       <div className="flex flex-col gap-3">
-        {mergedStats.filter((s: any) => s.hasPitching).map((row: any, i: number) => {
+        {/* ★ 修正：currentStats だけをループする */}
+        {currentStats.filter((s: any) => s.hasPitching).map((row: any, i: number) => {
           const s = calcSaber(row, 'P') as any;
           const ip = formatIP(row.p.投球回);
           
@@ -433,8 +435,6 @@ export default function PlayerDetail() {
                 <div className="flex items-center gap-3 mb-3 md:mb-0">
                   <span className="font-black text-xl text-slate-800">
                     {row.年度}
-                    {/* ★追加：2軍成績の場合は緑色のバッジを表示 */}
-                    {row.level === 2 && <span className="text-[10px] bg-green-600 text-white px-1.5 py-0.5 rounded-md ml-2 align-middle tracking-wider border border-green-700 shadow-sm">2軍</span>}
                   </span>
                   <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-md">{row.所属球団}</span>
                 </div>
@@ -590,9 +590,27 @@ export default function PlayerDetail() {
           </div>
         </div>
 
+        {/* ★ 追加：1軍/2軍の成績表示切り替えタブ */}
+        <div className="flex justify-center mb-8">
+          <div className="bg-slate-200 p-1 rounded-2xl flex w-full max-w-sm gap-1 shadow-inner border border-slate-300/50">
+            <button 
+              onClick={() => setLeagueType('1軍')}
+              className={`flex-1 py-3 rounded-xl font-black text-sm transition-all ${leagueType === '1軍' ? 'bg-white text-blue-600 shadow-md' : 'text-slate-500 hover:bg-slate-300/50'}`}
+            >
+              1軍成績
+            </button>
+            <button 
+              onClick={() => setLeagueType('2軍')}
+              className={`flex-1 py-3 rounded-xl font-black text-sm transition-all ${leagueType === '2軍' ? 'bg-white text-green-600 shadow-md' : 'text-slate-500 hover:bg-slate-300/50'}`}
+            >
+              2軍成績
+            </button>
+          </div>
+        </div>
+
         <div className="bg-white rounded-[2rem] p-6 shadow-xl border-4 border-slate-100 mb-8 text-black">
-          <h3 className="text-blue-600 font-black text-xs uppercase border-b-2 border-blue-100 pb-2 mb-4">
-            {isPitcher ? '奪三振・防御率トレンド' : '本塁打・OPSトレンド'}
+          <h3 className={`font-black text-xs uppercase border-b-2 pb-2 mb-4 ${leagueType === '1軍' ? 'text-blue-600 border-blue-100' : 'text-green-600 border-green-100'}`}>
+            {isPitcher ? '奪三振・防御率トレンド' : '本塁打・OPSトレンド'} <span className="text-slate-400 ml-1">{leagueType}</span>
           </h3>
           <div className="h-48 w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -620,15 +638,20 @@ export default function PlayerDetail() {
         </div>
 
         <section className="mb-20 space-y-8">
-          {isPitcher ? (
+          {currentStats.length === 0 ? (
+            <div className="bg-white rounded-3xl border-4 border-dashed border-slate-200 p-12 text-center">
+              <p className="text-slate-400 font-black italic text-xl">No {leagueType} Data</p>
+              <p className="text-slate-400 text-sm mt-2">{leagueType}の成績データはありません</p>
+            </div>
+          ) : isPitcher ? (
             <>
-              {mergedStats.some((s: any) => s.hasPitching) && renderPitchingAccordion()}
-              {renderBattingAccordion()}
+              {currentStats.some((s: any) => s.hasPitching) && renderPitchingAccordion()}
+              {currentStats.some((s: any) => s.hasBatting) && renderBattingAccordion()}
             </>
           ) : (
             <>
-              {renderBattingAccordion()}
-              {mergedStats.some((s: any) => s.hasPitching) && renderPitchingAccordion()}
+              {currentStats.some((s: any) => s.hasBatting) && renderBattingAccordion()}
+              {currentStats.some((s: any) => s.hasPitching) && renderPitchingAccordion()}
             </>
           )}
         </section>
