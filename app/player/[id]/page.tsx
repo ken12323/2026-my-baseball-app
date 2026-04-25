@@ -77,7 +77,6 @@ export default function PlayerDetail() {
   const [expandedB, setExpandedB] = useState<number | null>(0);
   const [expandedP, setExpandedP] = useState<number | null>(0);
   
-  // ★ 追加：1軍/2軍の切り替えタブ状態
   const [leagueType, setLeagueType] = useState<'1軍' | '2軍'>('1軍');
 
   const dotFormat = (val: any) => {
@@ -90,6 +89,44 @@ export default function PlayerDetail() {
     if (!s.includes('.')) return toF(s);
     const [int, frac] = s.split('.').map(Number);
     return int + (frac === 1 ? 0.333 : frac === 2 ? 0.666 : 0);
+  };
+
+  // ★ 追加：通算成績（打者）の計算関数
+  const calcBattingTotals = (stats: any[]) => {
+    let g=0, pa=0, ab=0, h=0, h2=0, h3=0, hr=0, rbi=0, bb=0, hbp=0, so=0;
+    stats.forEach(s => {
+      const b = s.b;
+      g += toF(b.試合); pa += toF(b.打席); ab += toF(b.打数);
+      h += toF(b.安打); h2 += toF(b.二塁打); h3 += toF(b.三塁打);
+      hr += toF(b.本塁打); rbi += toF(b.打点); 
+      bb += toF(b.四球); hbp += toF(b.死球); so += toF(b.三振);
+    });
+    const avg = ab > 0 ? (h / ab) : 0;
+    const obp = pa > 0 ? ((h + bb + hbp) / pa) : 0;
+    const tb = (h - h2 - h3 - hr) + (h2 * 2) + (h3 * 3) + (hr * 4);
+    const slg = ab > 0 ? (tb / ab) : 0;
+    const ops = obp + slg;
+    return { 試合: g, 安打: h, 本塁打: hr, 打点: rbi, 打率: dotFormat(avg), OPS: dotFormat(ops) };
+  };
+
+  // ★ 追加：通算成績（投手）の計算関数
+  const calcPitchingTotals = (stats: any[]) => {
+    let g=0, w=0, l=0, sv=0, hp=0, ip=0, h=0, bb=0, so=0, er=0;
+    stats.forEach(s => {
+      const p = s.p;
+      g += toF(p.登板); w += toF(p.勝利); l += toF(p.敗北);
+      sv += toF(p.セーブ); hp += toF(p.ホールドポイント || p.HP);
+      ip += formatIP(p.投球回); h += toF(p.被安打 || p.安打);
+      bb += toF(p.与四球 || p.四球); so += toF(p.三振 || p.奪三振); er += toF(p.自責点);
+    });
+    const era = ip > 0 ? (er * 9 / ip) : 0;
+    
+    // 投球回を「100.1」の形式に戻す
+    const ipInt = Math.floor(ip);
+    const ipFrac = Math.round((ip - ipInt) * 3);
+    const displayIp = ipFrac === 0 ? ipInt.toString() : `${ipInt}.${ipFrac}`;
+
+    return { 登板: g, 勝利: w, 敗北: l, セーブ: sv, HP: hp, 投球回: displayIp, 奪三振: so, 防御率: era.toFixed(2) };
   };
 
   const calcSaber = (row: any, type: 'P' | 'B') => {
@@ -191,7 +228,6 @@ export default function PlayerDetail() {
         });
         setMergedStats(merged);
 
-        // ★ 追加：1軍データがなく、2軍データがある選手は、初期タブを賢く「2軍」にする
         if (!merged.some((s: any) => s.level === 1) && merged.some((s: any) => s.level === 2)) {
           setLeagueType('2軍');
         }
@@ -262,11 +298,9 @@ export default function PlayerDetail() {
   if (loading) return <div className="p-10 text-blue-600 bg-white min-h-screen font-black flex items-center justify-center animate-bounce text-2xl">データ読み込み中...</div>;
   if (!player) return <div className="p-10 text-center font-black text-slate-400 mt-20">選手が見つかりません</div>;
 
-  // ★ 追加：選択されているリーグ（タブ）のデータだけを抽出
   const currentStats = mergedStats.filter((s: any) => s.level === (leagueType === '1軍' ? 1 : 2));
 
   const teamInitial = player.team_name.includes('阪神') ? 'T' : player.team_name.includes('中日') ? 'D' : 'P';
-  // 最新の成績も「選択中のリーグ」のものにする
   const latest = currentStats[0] || {};
   const latestB = latest.b || {};
   const latestP = latest.p || {};
@@ -280,7 +314,6 @@ export default function PlayerDetail() {
   const isPitcher = player.position_detail === '投手';
   const predictedHR = !isPitcher && toF(latestB.試合) > 0 ? Math.round((toF(latestB.本塁打) / toF(latestB.試合)) * 143) : 0;
   
-  // グラフも選択中のリーグのみを描画
   const chartData = [...currentStats].reverse().map((r: any, i: number) => {
     const isThisYear = i === currentStats.length - 1;
     const yearLabel = `${r.年度}`;
@@ -338,151 +371,206 @@ export default function PlayerDetail() {
     );
   };
 
-  const renderBattingAccordion = () => (
-    <div key="batting" className="mb-12">
-      <div className="flex justify-between items-center mb-4 px-2">
-        <h2 className="text-xl font-black italic border-l-8 border-green-600 pl-4 text-slate-900 uppercase tracking-tight">Batting Data</h2>
-      </div>
-      <div className="flex flex-col gap-3">
-        {/* ★ 修正：currentStats だけをループする */}
-        {currentStats.filter((s: any) => s.hasBatting).map((row: any, i: number) => {
-          const s = calcSaber(row, 'B') as any;
-          const isOpen = expandedB === i;
-          return (
-            <div key={i} className="bg-white border-[3px] border-slate-100 rounded-2xl shadow-sm transition-all relative overflow-visible">
-              <button 
-                onClick={() => setExpandedB(isOpen ? null : i)}
-                className={`w-full flex flex-col md:flex-row md:items-center justify-between p-4 cursor-pointer transition-colors ${isOpen ? 'bg-blue-50/50 rounded-t-xl' : 'hover:bg-slate-50 rounded-xl'}`}
-              >
-                <div className="flex items-center gap-3 mb-3 md:mb-0">
-                  <span className="font-black text-xl text-slate-800">
-                    {row.年度} 
+  const renderBattingAccordion = () => {
+    // ★ 追加：アコーディオンリストを描画する前に通算成績を計算
+    const bStats = currentStats.filter((s: any) => s.hasBatting);
+    const bTotals = calcBattingTotals(bStats);
+
+    return (
+      <div key="batting" className="mb-12">
+        <div className="flex justify-between items-center mb-4 px-2">
+          <h2 className="text-xl font-black italic border-l-8 border-green-600 pl-4 text-slate-900 uppercase tracking-tight">Batting Data</h2>
+        </div>
+        <div className="flex flex-col gap-3">
+          {bStats.map((row: any, i: number) => {
+            const s = calcSaber(row, 'B') as any;
+            const isOpen = expandedB === i;
+            return (
+              <div key={i} className="bg-white border-[3px] border-slate-100 rounded-2xl shadow-sm transition-all relative overflow-visible">
+                <button 
+                  onClick={() => setExpandedB(isOpen ? null : i)}
+                  className={`w-full flex flex-col md:flex-row md:items-center justify-between p-4 cursor-pointer transition-colors ${isOpen ? 'bg-blue-50/50 rounded-t-xl' : 'hover:bg-slate-50 rounded-xl'}`}
+                >
+                  <div className="flex items-center gap-3 mb-3 md:mb-0">
+                    <span className="font-black text-xl text-slate-800">
+                      {row.年度} 
+                    </span>
+                    <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-md">{row.所属球団}</span>
+                  </div>
+                  <div className="flex items-center justify-between md:justify-end gap-4 w-full md:w-auto text-sm font-black text-slate-700">
+                    <div className="flex gap-4 md:gap-6 text-[12px] md:text-sm flex-1 justify-around md:justify-end">
+                      <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">試合</span><span className="font-bold">{row.b.試合 || 0}</span></div>
+                      <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">打率</span><span className="font-bold">{dotFormat(row.b.打率)}</span></div>
+                      <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">HR</span><span className="font-bold">{row.b.本塁打 || 0}</span></div>
+                      <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">打点</span><span className="font-bold">{row.b.打点 || 0}</span></div>
+                      <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">OPS</span><span className="font-bold">{dotFormat(s.ops)}</span></div>
+                    </div>
+                    <div className={`text-slate-400 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                  </div>
+                </button>
+                
+                {isOpen && (
+                  <div className="p-4 md:p-6 bg-slate-50 border-t-[3px] border-slate-100 rounded-b-xl">
+                    <div className="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-y-6 gap-x-2 text-center text-xs">
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1">打席</div><div className="font-bold text-slate-800 text-sm">{row.b.打席 || 0}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1">安打</div><div className="font-bold text-slate-800 text-sm">{row.b.安打 || 0}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1">二塁打</div><div className="font-bold text-slate-800 text-sm">{row.b.二塁打 || 0}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1">三塁打</div><div className="font-bold text-slate-800 text-sm">{row.b.三塁打 || 0}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1">盗塁</div><div className="font-bold text-slate-800 text-sm">{row.b.盗塁 || 0}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1">四球</div><div className="font-bold text-slate-800 text-sm">{row.b.四球 || 0}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1">死球</div><div className="font-bold text-slate-800 text-sm">{row.b.死球 || 0}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1">三振</div><div className="font-bold text-slate-800 text-sm">{row.b.三振 || 0}</div></div>
+                      
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">出塁率</div><div className="font-bold text-slate-800 text-sm">{dotFormat(row.b.出塁率)}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">長打率</div><div className="font-bold text-slate-800 text-sm">{dotFormat(row.b.長打率)}</div></div>
+                      
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">wOBA<HelpIcon id={`woba_${i}`} text="1打席あたりにどれだけ得点産出に貢献したかを表す指標" benchmark=".330前後が平均、.400超えで一流打者。"/></div><div className="font-bold text-slate-800 text-sm">{dotFormat(s.woba)}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">ISOp<HelpIcon id={`isop_${i}`} text="長打力（打率を含まない純粋な長打の割合）" benchmark=".150で平均的、.200以上で強打者、.250以上は長距離砲。"/></div><div className="font-bold text-slate-800 text-sm">{dotFormat(s.iso)}</div></div>
+                      
+                      <div className="bg-white rounded-lg border border-orange-100 py-1 shadow-sm"><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">wRC+<HelpIcon id={`wrcplus_${i}`} text="球場や時代を補正した打撃の傑出度。" benchmark="100が平均、120で優秀、140以上はMVP級。"/></div><div className="font-black text-orange-600 text-base">{s.wrcPlus}</div></div>
+                      <div className="bg-white rounded-lg border border-blue-100 py-1 shadow-sm"><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">WAR<HelpIcon id={`war_b_${i}`} text="打撃・走塁・守備を総合評価し、控え選手に比べてチームに何勝分上乗せしたか" benchmark="2.0でレギュラー、4.0でオールスター級、6.0以上でMVP級。"/></div><div className="font-black text-blue-600 text-base">{s.war}</div></div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* ★ 追加：打者用の通算成績（Career Total）表示ブロック */}
+          {bStats.length > 0 && (
+            <div className={`mt-2 bg-gradient-to-r ${leagueType === '1軍' ? 'from-blue-700 to-blue-900' : 'from-green-600 to-green-800'} border-[3px] border-transparent rounded-2xl shadow-lg p-4 md:p-6 text-white relative overflow-hidden`}>
+              <div className="absolute top-0 right-0 opacity-10 text-7xl font-black -mt-4 -mr-4 select-none">TOTAL</div>
+              <div className="flex flex-col md:flex-row items-center justify-between gap-6 relative z-10">
+                <div className="flex items-center gap-4 border-b md:border-b-0 md:border-r border-white/20 pb-4 md:pb-0 md:pr-6 w-full md:w-auto justify-center md:justify-start">
+                  <span className="font-black text-3xl tracking-widest uppercase text-white drop-shadow-md leading-none">
+                    Career<br/><span className="text-[11px] tracking-normal text-white/80 block mt-1">通算成績 ({leagueType})</span>
                   </span>
-                  <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-md">{row.所属球団}</span>
                 </div>
-                <div className="flex items-center justify-between md:justify-end gap-4 w-full md:w-auto text-sm font-black text-slate-700">
-                  <div className="flex gap-4 md:gap-6 text-[12px] md:text-sm flex-1 justify-around md:justify-end">
-                    <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">試合</span><span className="font-bold">{row.b.試合 || 0}</span></div>
-                    <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">打率</span><span className="font-bold">{dotFormat(row.b.打率)}</span></div>
-                    <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">HR</span><span className="font-bold">{row.b.本塁打 || 0}</span></div>
-                    <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">打点</span><span className="font-bold">{row.b.打点 || 0}</span></div>
-                    <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">OPS</span><span className="font-bold">{dotFormat(s.ops)}</span></div>
-                  </div>
-                  <div className={`text-slate-400 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                  </div>
+                <div className="flex items-center justify-center md:justify-end gap-2 md:gap-8 w-full md:w-auto text-sm font-black text-white">
+                  <div className="flex flex-col items-center"><span className="text-[10px] text-white/60 mb-0.5">試合</span><span className="font-bold text-xl drop-shadow-sm">{bTotals.試合}</span></div>
+                  <div className="flex flex-col items-center"><span className="text-[10px] text-white/60 mb-0.5">打率</span><span className="font-bold text-xl drop-shadow-sm">{bTotals.打率}</span></div>
+                  <div className="flex flex-col items-center"><span className="text-[10px] text-white/60 mb-0.5">安打</span><span className="font-bold text-xl drop-shadow-sm text-yellow-300">{bTotals.安打}</span></div>
+                  <div className="flex flex-col items-center"><span className="text-[10px] text-white/60 mb-0.5">HR</span><span className="font-bold text-xl drop-shadow-sm text-red-300">{bTotals.本塁打}</span></div>
+                  <div className="flex flex-col items-center"><span className="text-[10px] text-white/60 mb-0.5">打点</span><span className="font-bold text-xl drop-shadow-sm">{bTotals.打点}</span></div>
+                  <div className="flex flex-col items-center"><span className="text-[10px] text-white/60 mb-0.5">OPS</span><span className="font-bold text-xl drop-shadow-sm">{bTotals.OPS}</span></div>
                 </div>
-              </button>
-              
-              {isOpen && (
-                <div className="p-4 md:p-6 bg-slate-50 border-t-[3px] border-slate-100 rounded-b-xl">
-                  <div className="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-y-6 gap-x-2 text-center text-xs">
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1">打席</div><div className="font-bold text-slate-800 text-sm">{row.b.打席 || 0}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1">安打</div><div className="font-bold text-slate-800 text-sm">{row.b.安打 || 0}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1">二塁打</div><div className="font-bold text-slate-800 text-sm">{row.b.二塁打 || 0}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1">三塁打</div><div className="font-bold text-slate-800 text-sm">{row.b.三塁打 || 0}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1">盗塁</div><div className="font-bold text-slate-800 text-sm">{row.b.盗塁 || 0}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1">四球</div><div className="font-bold text-slate-800 text-sm">{row.b.四球 || 0}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1">死球</div><div className="font-bold text-slate-800 text-sm">{row.b.死球 || 0}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1">三振</div><div className="font-bold text-slate-800 text-sm">{row.b.三振 || 0}</div></div>
-                    
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">出塁率</div><div className="font-bold text-slate-800 text-sm">{dotFormat(row.b.出塁率)}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">長打率</div><div className="font-bold text-slate-800 text-sm">{dotFormat(row.b.長打率)}</div></div>
-                    
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">wOBA<HelpIcon id={`woba_${i}`} text="1打席あたりにどれだけ得点産出に貢献したかを表す指標" benchmark=".330前後が平均、.400超えで一流打者。"/></div><div className="font-bold text-slate-800 text-sm">{dotFormat(s.woba)}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">ISOp<HelpIcon id={`isop_${i}`} text="長打力（打率を含まない純粋な長打の割合）" benchmark=".150で平均的、.200以上で強打者、.250以上は長距離砲。"/></div><div className="font-bold text-slate-800 text-sm">{dotFormat(s.iso)}</div></div>
-                    
-                    <div className="bg-white rounded-lg border border-orange-100 py-1 shadow-sm"><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">wRC+<HelpIcon id={`wrcplus_${i}`} text="球場や時代を補正した打撃の傑出度。" benchmark="100が平均、120で優秀、140以上はMVP級。"/></div><div className="font-black text-orange-600 text-base">{s.wrcPlus}</div></div>
-                    <div className="bg-white rounded-lg border border-blue-100 py-1 shadow-sm"><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">WAR<HelpIcon id={`war_b_${i}`} text="打撃・走塁・守備を総合評価し、控え選手に比べてチームに何勝分上乗せしたか" benchmark="2.0でレギュラー、4.0でオールスター級、6.0以上でMVP級。"/></div><div className="font-black text-blue-600 text-base">{s.war}</div></div>
-                  </div>
-                </div>
-              )}
+              </div>
             </div>
-          );
-        })}
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
-  const renderPitchingAccordion = () => (
-    <div key="pitching" className="mb-12">
-      <div className="flex justify-between items-center mb-4 px-2">
-        <h2 className="text-xl font-black italic border-l-8 border-blue-600 pl-4 text-slate-900 uppercase tracking-tight">Pitching Data</h2>
-      </div>
-      <div className="flex flex-col gap-3">
-        {/* ★ 修正：currentStats だけをループする */}
-        {currentStats.filter((s: any) => s.hasPitching).map((row: any, i: number) => {
-          const s = calcSaber(row, 'P') as any;
-          const ip = formatIP(row.p.投球回);
-          
-          const walks = toF(row.p.与四球 || row.p.四球);
-          const hits = toF(row.p.被安打 || row.p.安打);
-          const so = toF(row.p.三振 || row.p.奪三振);
-          const hbp = toF(row.p.死球 || row.p.与死球);
-          const batters = toF(row.p.打者) || (ip > 0 ? Math.round(ip * 3 + hits + walks + hbp) : 0);
+  const renderPitchingAccordion = () => {
+    // ★ 追加：アコーディオンリストを描画する前に通算成績を計算
+    const pStats = currentStats.filter((s: any) => s.hasPitching);
+    const pTotals = calcPitchingTotals(pStats);
 
-          const whip = ip > 0 ? ((walks + hits) / ip).toFixed(2) : '-';
-          const kbb = walks > 0 ? (so / walks).toFixed(2) : (so > 0 ? '∞' : '-');
-          const kbbPct = batters > 0 ? (((so - walks) / batters) * 100).toFixed(1) + '%' : '-';
+    return (
+      <div key="pitching" className="mb-12">
+        <div className="flex justify-between items-center mb-4 px-2">
+          <h2 className="text-xl font-black italic border-l-8 border-blue-600 pl-4 text-slate-900 uppercase tracking-tight">Pitching Data</h2>
+        </div>
+        <div className="flex flex-col gap-3">
+          {pStats.map((row: any, i: number) => {
+            const s = calcSaber(row, 'P') as any;
+            const ip = formatIP(row.p.投球回);
+            
+            const walks = toF(row.p.与四球 || row.p.四球);
+            const hits = toF(row.p.被安打 || row.p.安打);
+            const so = toF(row.p.三振 || row.p.奪三振);
+            const hbp = toF(row.p.死球 || row.p.与死球);
+            const batters = toF(row.p.打者) || (ip > 0 ? Math.round(ip * 3 + hits + walks + hbp) : 0);
 
-          const isOpen = expandedP === i;
-          return (
-            <div key={i} className="bg-white border-[3px] border-slate-100 rounded-2xl shadow-sm transition-all relative overflow-visible">
-              <button 
-                onClick={() => setExpandedP(isOpen ? null : i)}
-                className={`w-full flex flex-col md:flex-row md:items-center justify-between p-4 cursor-pointer transition-colors ${isOpen ? 'bg-blue-50/50 rounded-t-xl' : 'hover:bg-slate-50 rounded-xl'}`}
-              >
-                <div className="flex items-center gap-3 mb-3 md:mb-0">
-                  <span className="font-black text-xl text-slate-800">
-                    {row.年度}
+            const whip = ip > 0 ? ((walks + hits) / ip).toFixed(2) : '-';
+            const kbb = walks > 0 ? (so / walks).toFixed(2) : (so > 0 ? '∞' : '-');
+            const kbbPct = batters > 0 ? (((so - walks) / batters) * 100).toFixed(1) + '%' : '-';
+
+            const isOpen = expandedP === i;
+            return (
+              <div key={i} className="bg-white border-[3px] border-slate-100 rounded-2xl shadow-sm transition-all relative overflow-visible">
+                <button 
+                  onClick={() => setExpandedP(isOpen ? null : i)}
+                  className={`w-full flex flex-col md:flex-row md:items-center justify-between p-4 cursor-pointer transition-colors ${isOpen ? 'bg-blue-50/50 rounded-t-xl' : 'hover:bg-slate-50 rounded-xl'}`}
+                >
+                  <div className="flex items-center gap-3 mb-3 md:mb-0">
+                    <span className="font-black text-xl text-slate-800">
+                      {row.年度}
+                    </span>
+                    <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-md">{row.所属球団}</span>
+                  </div>
+                  <div className="flex items-center justify-between md:justify-end gap-4 w-full md:w-auto text-sm font-black text-slate-700">
+                    <div className="flex gap-4 md:gap-6 text-[12px] md:text-sm flex-1 justify-around md:justify-end">
+                      <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">登板</span><span className="font-bold">{row.p.登板 || 0}</span></div>
+                      <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">防御率</span><span className="font-bold text-red-600">{toF(row.p.防御率).toFixed(2)}</span></div>
+                      <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">勝</span><span className="font-bold">{row.p.勝利 || 0}</span></div>
+                      <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">回</span><span className="font-bold">{row.p.投球回 || '0'}</span></div>
+                      <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">奪三振</span><span className="font-bold">{row.p.三振 || row.p.奪三振 || 0}</span></div>
+                    </div>
+                    <div className={`text-slate-400 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                  </div>
+                </button>
+                
+                {isOpen && (
+                  <div className="p-4 md:p-6 bg-slate-50 border-t-[3px] border-slate-100 rounded-b-xl">
+                    <div className="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-y-6 gap-x-2 text-center text-xs">
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1">先発</div><div className="font-bold text-slate-800 text-sm">{row.p.先発 || 0}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1">完投</div><div className="font-bold text-slate-800 text-sm">{row.p.完投 || 0}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1">敗北</div><div className="font-bold text-slate-800 text-sm">{row.p.敗北 || 0}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1">セーブ</div><div className="font-bold text-slate-800 text-sm">{row.p.セーブ || 0}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1">HP</div><div className="font-bold text-slate-800 text-sm">{row.p.ホールドポイント || row.p.HP || 0}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1">被安打</div><div className="font-bold text-slate-800 text-sm">{hits}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1">被本塁打</div><div className="font-bold text-slate-800 text-sm">{row.p.被本塁打 || row.p.本塁打 || 0}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1">与四球</div><div className="font-bold text-slate-800 text-sm">{walks}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1">失点</div><div className="font-bold text-slate-800 text-sm">{row.p.失点 || 0}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1">自責点</div><div className="font-bold text-slate-800 text-sm">{row.p.自責点 || 0}</div></div>
+                      
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">K/9<HelpIcon id={`k9_${i}`} text="9イニングあたりの奪三振数" benchmark="7.0で平均的、9.0以上で高い奪三振能力。"/></div><div className="font-bold text-slate-800 text-sm">{(so*9/ip).toFixed(2)}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">BB/9<HelpIcon id={`bb9_${i}`} text="9イニングあたりの与四球数" benchmark="3.0以下で優秀、2.0以下で抜群の制球力。"/></div><div className="font-bold text-slate-800 text-sm">{(walks*9/ip).toFixed(2)}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">WHIP<HelpIcon id={`whip_${i}`} text="1イニングあたりに何人の走者を出したか。" benchmark="1.20未満で優秀、1.00未満で球界を代表するエース。"/></div><div className="font-bold text-slate-800 text-sm">{whip}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">K/BB<HelpIcon id={`kbb_${i}`} text="奪三振と与四球の比率。投手の制球力と支配力を示す" benchmark="3.5以上で優秀、5.0以上は圧倒的な支配力。"/></div><div className="font-bold text-slate-800 text-sm">{kbb}</div></div>
+                      <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">K-BB%<HelpIcon id={`kbbpct_${i}`} text="全打者に対する (奪三振-与四球) の割合。運に左右されない真の支配力" benchmark="15%で優秀、20%以上は球界を代表する圧倒的なエース。"/></div><div className="font-bold text-slate-800 text-sm">{kbbPct}</div></div>
+                      
+                      <div className="bg-white rounded-lg border border-orange-100 py-1 shadow-sm"><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">FIP<HelpIcon id={`fip_p_${i}`} text="被本塁打・与四死球・奪三振のみで評価した、運に左右されない防御率" benchmark="3.50で優秀、2.00台でエース、1.00台は歴史的。"/></div><div className="font-black text-orange-600 text-base">{s.fip}</div></div>
+                      <div className="bg-white rounded-lg border border-blue-100 py-1 shadow-sm"><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">WAR<HelpIcon id={`war_p_${i}`} text="投球イニングと失点率から、控え投手に比べてチームに何勝分上乗せしたか" benchmark="2.0でローテ定着、4.0でエース級、6.0以上で沢村賞級。"/></div><div className="font-black text-blue-600 text-base">{s.war}</div></div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* ★ 追加：投手用の通算成績（Career Total）表示ブロック */}
+          {pStats.length > 0 && (
+            <div className={`mt-2 bg-gradient-to-r ${leagueType === '1軍' ? 'from-blue-700 to-blue-900' : 'from-green-600 to-green-800'} border-[3px] border-transparent rounded-2xl shadow-lg p-4 md:p-6 text-white relative overflow-hidden`}>
+              <div className="absolute top-0 right-0 opacity-10 text-7xl font-black -mt-4 -mr-4 select-none">TOTAL</div>
+              <div className="flex flex-col md:flex-row items-center justify-between gap-6 relative z-10">
+                <div className="flex items-center gap-4 border-b md:border-b-0 md:border-r border-white/20 pb-4 md:pb-0 md:pr-6 w-full md:w-auto justify-center md:justify-start">
+                  <span className="font-black text-3xl tracking-widest uppercase text-white drop-shadow-md leading-none">
+                    Career<br/><span className="text-[11px] tracking-normal text-white/80 block mt-1">通算成績 ({leagueType})</span>
                   </span>
-                  <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-md">{row.所属球団}</span>
                 </div>
-                <div className="flex items-center justify-between md:justify-end gap-4 w-full md:w-auto text-sm font-black text-slate-700">
-                  <div className="flex gap-4 md:gap-6 text-[12px] md:text-sm flex-1 justify-around md:justify-end">
-                    <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">登板</span><span className="font-bold">{row.p.登板 || 0}</span></div>
-                    <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">防御率</span><span className="font-bold text-red-600">{toF(row.p.防御率).toFixed(2)}</span></div>
-                    <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">勝</span><span className="font-bold">{row.p.勝利 || 0}</span></div>
-                    <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">回</span><span className="font-bold">{row.p.投球回 || '0'}</span></div>
-                    <div className="flex flex-col items-center"><span className="text-[10px] text-slate-400 mb-0.5">奪三振</span><span className="font-bold">{row.p.三振 || row.p.奪三振 || 0}</span></div>
-                  </div>
-                  <div className={`text-slate-400 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                  </div>
+                <div className="flex items-center justify-center md:justify-end gap-2 md:gap-8 w-full md:w-auto text-sm font-black text-white">
+                  <div className="flex flex-col items-center"><span className="text-[10px] text-white/60 mb-0.5">登板</span><span className="font-bold text-xl drop-shadow-sm">{pTotals.登板}</span></div>
+                  <div className="flex flex-col items-center"><span className="text-[10px] text-white/60 mb-0.5">防御率</span><span className="font-bold text-xl drop-shadow-sm text-red-300">{pTotals.防御率}</span></div>
+                  <div className="flex flex-col items-center"><span className="text-[10px] text-white/60 mb-0.5">勝利</span><span className="font-bold text-xl drop-shadow-sm text-yellow-300">{pTotals.勝利}</span></div>
+                  <div className="flex flex-col items-center"><span className="text-[10px] text-white/60 mb-0.5">投球回</span><span className="font-bold text-xl drop-shadow-sm">{pTotals.投球回}</span></div>
+                  <div className="flex flex-col items-center"><span className="text-[10px] text-white/60 mb-0.5">奪三振</span><span className="font-bold text-xl drop-shadow-sm">{pTotals.奪三振}</span></div>
+                  <div className="flex flex-col items-center"><span className="text-[10px] text-white/60 mb-0.5">セーブ</span><span className="font-bold text-xl drop-shadow-sm">{pTotals.セーブ}</span></div>
+                  <div className="flex flex-col items-center"><span className="text-[10px] text-white/60 mb-0.5">HP</span><span className="font-bold text-xl drop-shadow-sm">{pTotals.HP}</span></div>
                 </div>
-              </button>
-              
-              {isOpen && (
-                <div className="p-4 md:p-6 bg-slate-50 border-t-[3px] border-slate-100 rounded-b-xl">
-                  <div className="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-y-6 gap-x-2 text-center text-xs">
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1">先発</div><div className="font-bold text-slate-800 text-sm">{row.p.先発 || 0}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1">完投</div><div className="font-bold text-slate-800 text-sm">{row.p.完投 || 0}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1">敗北</div><div className="font-bold text-slate-800 text-sm">{row.p.敗北 || 0}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1">セーブ</div><div className="font-bold text-slate-800 text-sm">{row.p.セーブ || 0}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1">HP</div><div className="font-bold text-slate-800 text-sm">{row.p.ホールドポイント || row.p.HP || 0}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1">被安打</div><div className="font-bold text-slate-800 text-sm">{hits}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1">被本塁打</div><div className="font-bold text-slate-800 text-sm">{row.p.被本塁打 || row.p.本塁打 || 0}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1">与四球</div><div className="font-bold text-slate-800 text-sm">{walks}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1">失点</div><div className="font-bold text-slate-800 text-sm">{row.p.失点 || 0}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1">自責点</div><div className="font-bold text-slate-800 text-sm">{row.p.自責点 || 0}</div></div>
-                    
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">K/9<HelpIcon id={`k9_${i}`} text="9イニングあたりの奪三振数" benchmark="7.0で平均的、9.0以上で高い奪三振能力。"/></div><div className="font-bold text-slate-800 text-sm">{(so*9/ip).toFixed(2)}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">BB/9<HelpIcon id={`bb9_${i}`} text="9イニングあたりの与四球数" benchmark="3.0以下で優秀、2.0以下で抜群の制球力。"/></div><div className="font-bold text-slate-800 text-sm">{(walks*9/ip).toFixed(2)}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">WHIP<HelpIcon id={`whip_${i}`} text="1イニングあたりに何人の走者を出したか。" benchmark="1.20未満で優秀、1.00未満で球界を代表するエース。"/></div><div className="font-bold text-slate-800 text-sm">{whip}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">K/BB<HelpIcon id={`kbb_${i}`} text="奪三振と与四球の比率。投手の制球力と支配力を示す" benchmark="3.5以上で優秀、5.0以上は圧倒的な支配力。"/></div><div className="font-bold text-slate-800 text-sm">{kbb}</div></div>
-                    <div><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">K-BB%<HelpIcon id={`kbbpct_${i}`} text="全打者に対する (奪三振-与四球) の割合。運に左右されない真の支配力" benchmark="15%で優秀、20%以上は球界を代表する圧倒的なエース。"/></div><div className="font-bold text-slate-800 text-sm">{kbbPct}</div></div>
-                    
-                    <div className="bg-white rounded-lg border border-orange-100 py-1 shadow-sm"><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">FIP<HelpIcon id={`fip_p_${i}`} text="被本塁打・与四死球・奪三振のみで評価した、運に左右されない防御率" benchmark="3.50で優秀、2.00台でエース、1.00台は歴史的。"/></div><div className="font-black text-orange-600 text-base">{s.fip}</div></div>
-                    <div className="bg-white rounded-lg border border-blue-100 py-1 shadow-sm"><div className="text-[10px] font-black text-slate-400 mb-1 flex items-center justify-center">WAR<HelpIcon id={`war_p_${i}`} text="投球イニングと失点率から、控え投手に比べてチームに何勝分上乗せしたか" benchmark="2.0でローテ定着、4.0でエース級、6.0以上で沢村賞級。"/></div><div className="font-black text-blue-600 text-base">{s.war}</div></div>
-                  </div>
-                </div>
-              )}
+              </div>
             </div>
-          );
-        })}
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <main className="min-h-screen bg-gray-50 p-2 md:p-10 text-slate-900 font-sans tracking-tight" onClick={() => setActiveTooltip(null)}>
