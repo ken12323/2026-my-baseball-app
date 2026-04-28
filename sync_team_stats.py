@@ -4,6 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 from supabase import create_client, Client
 import unicodedata
+
 try:
     from dotenv import load_dotenv
     load_dotenv('.env.local')
@@ -86,14 +87,10 @@ def parse_salary_to_oku(val_str):
 def sync_farm_only_roster():
     print("🔄 オイシックス・ハヤテの選手を探索し、専用マスター(farm_players)を更新します...")
     
-    # 既存の全選手名を両方のマスターから取得（二重登録を完全防止）
-    res_main = supabase.table("players").select("player_name").execute()
-    res_farm = supabase.table("farm_players").select("player_name").execute()
-    
-    existing_names = set()
-    for r in (res_main.data + res_farm.data):
-        clean = re.sub(r'\s+', '', unicodedata.normalize('NFKC', r["player_name"]))
-        existing_names.add(clean)
+    # 二重登録防止のため、既存の player_id (YahooID) を取得
+    res_main = supabase.table("players").select("player_id").execute()
+    res_farm = supabase.table("farm_players").select("player_id").execute()
+    existing_ids = {str(p["player_id"]) for p in (res_main.data + res_farm.data)}
         
     new_players = []
     for team_name, team_id in FARM_ONLY_YAHOO_TEAMS.items():
@@ -105,59 +102,71 @@ def sync_farm_only_roster():
             match = re.search(r"/npb/player/(\d+)/top", a["href"])
             if not match: continue
             
-            yahoo_id = match.group(1).zfill(8)
+            yahoo_id = match.group(1)
             
-            # ⚠️対策1: HTML内のテキストをパーツごとに分割取得 (例: ['41', '上村 知輝', 'ウエムラ トモキ'])
+            # すでに登録済みならスルー
+            if yahoo_id in existing_ids:
+                continue
+
             texts = list(a.stripped_strings)
             if not texts: continue
             
-            # ⚠️対策2: 監督・コーチの完全除外（ただし「選手兼任コーチ」は残す）
             is_coach = any(('監督' in t or 'コーチ' in t) and '選手' not in t for t in texts)
-            if is_coach:
-                continue
+            if is_coach: continue
                 
-            # ⚠️対策3: 背番号(数字のみ)をスキップし、純粋な「漢字の名前」だけを抽出
             raw_name = ""
             for t in texts:
-                if re.match(r'^[\d\.]+$', t): # 背番号など数字のみの要素はスキップ
-                    continue
-                raw_name = t # 最初の数字以外の文字列が名前
+                if re.match(r'^[\d\.]+$', t): continue
+                raw_name = t 
                 break
                 
             clean_name = re.sub(r'\s+', '', unicodedata.normalize('NFKC', raw_name))
             
-            # すでに1軍マスターやファームマスターにいる選手（元NPB選手など）はスルー
-            if not clean_name or clean_name in existing_names:
-                continue
-                
             new_players.append({
-                "player_id": yahoo_id,       # 主キーとしてYahooIDを使用
-                "sportsnavi_id": yahoo_id,   # あなたの用意した神カラムにも登録！
+                "player_id": yahoo_id,
+                "sportsnavi_id": yahoo_id,
                 "player_name": clean_name,
                 "team_name": TEAM_NAME_MAP.get(team_name, team_name)
             })
-            existing_names.add(clean_name)
+            existing_ids.add(yahoo_id)
             
     if new_players:
-        # ★ 1軍の players テーブルには絶対触れず、farm_players にのみ安全にInsert！
         for i in range(0, len(new_players), 50):
             supabase.table("farm_players").insert(new_players[i:i+50]).execute()
-        print(f"✅ 新規ファーム専用選手 {len(new_players)} 名を 'farm_players' テーブルに安全に登録しました！")
+        print(f"✅ 新規ファーム専用選手 {len(new_players)} 名を登録しました！")
     else:
-        print("✅ 新規ファーム選手はいませんでした（farm_playersは最新です）。")
+        print("✅ 新規ファーム選手はいませんでした。")
 
 
-MASTER_PLAYER_MAP = {}
+# 🚀 【改修】マスターデータを「スポナビID」をキーにした辞書にする
+MASTER_PLAYER_MAP_BY_YAHOO = {}
+# NPB公式の選手一覧から名前で引くためのバックアップ（NPBファームページ用）
+MASTER_PLAYER_MAP_BY_NAME = {}
+
 def fetch_master():
-    # ★ 両方のマスターテーブルからデータをメモリに合流させる（計算処理用）
-    res_main = supabase.table("players").select("player_id, player_name, salary_estimated").execute()
-    res_farm = supabase.table("farm_players").select("player_id, player_name, salary_estimated").execute()
+    print("📋 マスターデータをスポナビIDでインデックス化します...")
+    res_main = supabase.table("players").select("player_id, sportsnavi_id, player_name, salary_estimated").execute()
+    res_farm = supabase.table("farm_players").select("player_id, sportsnavi_id, player_name, salary_estimated").execute()
     
     for p in (res_main.data + res_farm.data):
+        pid = str(p["player_id"]).zfill(8)
+        salary = parse_salary_to_oku(p.get("salary_estimated", ""))
         name = re.sub(r'\s+', '', unicodedata.normalize('NFKC', p["player_name"]))
-        MASTER_PLAYER_MAP[name] = {
-            "id": str(p["player_id"]).zfill(8),
-            "salary_oku": parse_salary_to_oku(p.get("salary_estimated", ""))
+
+        # A. スポナビIDをキーにする（1軍データ用）
+        if p.get("sportsnavi_id"):
+            s_id = str(p["sportsnavi_id"]).strip()
+            MASTER_PLAYER_MAP_BY_YAHOO[s_id] = {
+                "id": pid,
+                "name": p["player_name"],
+                "salary_oku": salary
+            }
+        
+        # B. 名前をキーにする（スポナビIDがないNPB公式ファームページ用）
+        MASTER_PLAYER_MAP_BY_NAME[name] = {
+            "id": pid,
+            "name": p["player_name"],
+            "salary_oku": salary
         }
 
 
@@ -176,13 +185,20 @@ def scrape_yahoo_first_team(team_name, team_id, mode):
         tds = row.find_all("td")
         p_a = tds[cols.index("選手名")].find("a") if "選手名" in cols else None
         if not p_a: continue
-        name = re.sub(r'\s+', '', unicodedata.normalize('NFKC', p_a.text))
-        if name not in MASTER_PLAYER_MAP: continue
+
+        # 🚀 【改修】名前テキストではなく、href内のスポナビIDをキーにする
+        href = p_a.get("href", "")
+        match = re.search(r'/player/(\d+)', href)
+        if not match: continue
+        yahoo_id = match.group(1)
+
+        if yahoo_id not in MASTER_PLAYER_MAP_BY_YAHOO:
+            continue
         
-        p_info = MASTER_PLAYER_MAP[name]
+        p_info = MASTER_PLAYER_MAP_BY_YAHOO[yahoo_id]
         s = {
             "player_id": p_info["id"], 
-            "名前": name, 
+            "名前": p_info["name"], # DB保存名は公式名を優先
             "年度": 2026, 
             "所属球団": TEAM_NAME_MAP.get(team_name, team_name),
             "_salary_oku": p_info["salary_oku"] 
@@ -206,6 +222,7 @@ def scrape_yahoo_first_team(team_name, team_id, mode):
 
 
 def scrape_npb_farm(team_name, team_code, mode):
+    # NPB公式ファームページはIDがないため、引き続き名前マッチング（正規化強化）を使用
     prefix = "idb2" if mode == "batting" else "idp2"
     url = f"https://npb.jp/bis/2026/stats/{prefix}_{team_code}.html"
     res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -226,12 +243,12 @@ def scrape_npb_farm(team_name, team_code, mode):
             raw_name = tds[cols.index("選手")].text
             name = re.sub(r'[\*\s　]+', '', unicodedata.normalize('NFKC', raw_name))
             
-            if name not in MASTER_PLAYER_MAP: continue
+            if name not in MASTER_PLAYER_MAP_BY_NAME: continue
             
-            p_info = MASTER_PLAYER_MAP[name]
+            p_info = MASTER_PLAYER_MAP_BY_NAME[name]
             s = {
                 "player_id": p_info["id"], 
-                "名前": name, 
+                "名前": p_info["name"], 
                 "年度": 2026, 
                 "所属球団": TEAM_NAME_MAP.get(team_name, team_name),
                 "_salary_oku": p_info["salary_oku"] 
@@ -245,8 +262,7 @@ def scrape_npb_farm(team_name, team_code, mode):
                 if c == "敗北": c = "敗戦"
                 if c == "完封勝": c = "完封"
                 
-                if c == "投球回": 
-                    s[c] = val
+                if c == "投球回": s[c] = val
                 elif "." in val or c in ["打率", "長打率", "出塁率", "勝率", "防御率"]: 
                     s[c] = safe_float(val)
                 else: 
@@ -381,7 +397,7 @@ def main():
     # 1. まずは安全に、新球団の選手のみを「farm_players」に事前同期
     sync_farm_only_roster()
     
-    # 2. マスターデータを最新状態でメモリに読み込み
+    # 2. マスターデータを最新状態でメモリに読み込み（IDインデックス作成）
     fetch_master()
     
     # 3. 1軍データの処理
