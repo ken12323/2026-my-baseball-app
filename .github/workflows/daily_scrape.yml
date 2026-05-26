@@ -15,32 +15,16 @@ jobs:
   pipeline:
     runs-on: ubuntu-latest
     
-    # 2026年のGitHub環境で警告を出さないための設定
+    # データベース接続情報をジョブ全体で共有
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # --- STEP 1: スクレイピング実行 (SNS拡散用・今日の速報データをAPI経由で取得) ---
-      - name: Trigger Scraper API
-        run: |
-          echo "Fetching Yesterday's data..."
-          # 日本時間の「昨日」の日付を計算してAPIに送る
-          YESTERDAY=$(date -d "9 hours ago -1 day" +%Y-%m-%d)
-          curl -X GET "${{ secrets.SITE_URL }}/api/scrape?key=${{ secrets.CRON_SECRET }}&date=$YESTERDAY"
-          
-          echo "Waiting for DB sync..."
-          sleep 10
-
-          echo "Fetching Today's data..."
-          curl -X GET "${{ secrets.SITE_URL }}/api/scrape?key=${{ secrets.CRON_SECRET }}"
-          
-          echo "API trigger completed. Waiting 20 seconds for final sync..."
-          sleep 20
-
-      # --- STEP 2: Python環境のセットアップとライブラリのインストール ---
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -49,13 +33,32 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install python-dotenv supabase
-          # requirements.txt に記載された全てのライブラリ(bs4, requests, supabase)を一括インストール
+          pip install python-dotenv supabase pandas numpy beautifulsoup4 requests
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      # --- STEP 3: 公式通算成績の同期 (打席数・WARなどの完全なデータを反映) ---
+      # --- 🚀 STEP 1: デイリー成績（今日・昨日）の直接取得 ---
+      - name: Fetch Daily Performance
+        run: |
+          echo "昨日の試合結果を取得します..."
+          YESTERDAY=$(date -d "9 hours ago -1 day" +%Y-%m-%d)
+          python fetch_daily_performance.py $YESTERDAY
+          
+          echo "今日の試合結果を取得します..."
+          python fetch_daily_performance.py
+
+      # --- 🚀 STEP 2: シーズン累計成績の基礎データ同期 ---
+      # （打席数や安打数などのベースとなるデータを取得する既存のスクリプト）
       - name: Run Official Stats Sync
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python sync_team_stats.py
+        run: |
+          echo "シーズン累計の基礎データを取得・同期します..."
+          python sync_team_stats.py
+
+      # --- 🚀 STEP 3: セイバーメトリクスの一括再計算 ---
+      # （STEP2のデータをもとに、最新のリーグ平均を使ってWARなどを再計算）
+      - name: Calculate Advanced Metrics
+        run: |
+          echo "打撃指標（wOBA, WARなど）を計算・更新します..."
+          python calc_batting_stats.py
+          
+          echo "投手指標（FIP, WARなど）を計算・更新します..."
+          python calc_pitching_stats.py
