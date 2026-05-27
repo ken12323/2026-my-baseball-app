@@ -387,7 +387,7 @@ def process_league(teams_dict, is_farm=False):
         final_data = [{k: v for k, v in row.items() if k in cols} for row in data]
         
         for i in range(0, len(final_data), 50):
-            supabase.table(table).upsert(final_data[i:i+50], on_conflict="player_id,年度").execute()
+            supabase.table(table).upsert(final_data[i:i+50], on_conflict="player_id,年度,所属球団").execute()
             
     prefix = "ファーム（2軍）" if is_farm else "1軍"
     print(f"✅ {prefix}の全指標計算と保存が完了しました！")
