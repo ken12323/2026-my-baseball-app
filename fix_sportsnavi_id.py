@@ -1,13 +1,24 @@
 import os
+import sys
 import re
 import requests
 from bs4 import BeautifulSoup
+import datetime
+import time
 from supabase import create_client, Client
-import unicodedata
 
-# 🌟 ご自身の環境のURLとキーに書き換えてください
-SUPABASE_URL = "https://wnzsahimcnxnxkkxfgdb.supabase.co"
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+# 🚀 既存の .env.local を読み込む
+try:
+    from dotenv import load_dotenv
+    load_dotenv('.env.local')
+except ImportError:
+    pass
+
+# --- ⚙️ 設定エリア ---
+# .env.local にある正しい変数名（SUPABASE_SERVICE_ROLE_KEY）を指定します
+# ※GitHub側で SUPABASE_KEY と登録してしまった場合にも備えて、どちらでも動くように or で繋ぎます
+SUPABASE_URL = os.environ.get("NEXT_PUBLIC_SUPABASE_URL", "https://wnzsahimcnxnxkkxfgdb.supabase.co")
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_KEY")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
