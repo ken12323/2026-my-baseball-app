@@ -36,7 +36,7 @@ jobs:
           pip install python-dotenv supabase pandas numpy beautifulsoup4 requests
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      # --- 🚀 STEP 1: デイリー成績（今日・昨日）の直接取得 ---
+      # --- 🚀 STEP 1: デイリー成績（今日・昨日）の取得 ---
       - name: Fetch Daily Performance
         run: |
           echo "昨日の試合結果を取得します..."
@@ -46,19 +46,9 @@ jobs:
           echo "今日の試合結果を取得します..."
           python fetch_daily_performance.py
 
-      # --- 🚀 STEP 2: シーズン累計成績の基礎データ同期 ---
-      # （打席数や安打数などのベースとなるデータを取得する既存のスクリプト）
-      - name: Run Official Stats Sync
+      # --- 🚀 STEP 2: シーズン成績の同期 ＆ 指標の計算 ---
+      # （基礎データの取得からWARなどの計算まで、この1スクリプトで完結）
+      - name: Sync Team Stats and Calculate Metrics
         run: |
-          echo "シーズン累計の基礎データを取得・同期します..."
+          echo "シーズン累計データの取得とセイバーメトリクス計算を一括実行します..."
           python sync_team_stats.py
-
-      # --- 🚀 STEP 3: セイバーメトリクスの一括再計算 ---
-      # （STEP2のデータをもとに、最新のリーグ平均を使ってWARなどを再計算）
-      - name: Calculate Advanced Metrics
-        run: |
-          echo "打撃指標（wOBA, WARなど）を計算・更新します..."
-          python calc_batting_stats.py
-          
-          echo "投手指標（FIP, WARなど）を計算・更新します..."
-          python calc_pitching_stats.py
