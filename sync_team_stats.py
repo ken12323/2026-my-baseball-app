@@ -50,8 +50,9 @@ PF_MAP = {
     'オイシックス': 1.00, 'ハヤテ': 1.00, 'くふうハヤテ': 1.00
 }
 
-BATTER_DB_COLS = ["player_id", "名前", "年度", "所属球団", "背番号", "試合", "打席", "打数", "得点", "安打", "二塁打", "三塁打", "本塁打", "塁打", "打点", "盗塁", "盗塁刺", "犠打", "犠飛", "四球", "死球", "三振", "併殺打", "打率", "長打率", "出塁率", "野手WAR", "wOBA", "wRC+", "OPS", "ISOp", "BABIP", "IsoD", "K%", "BB%", "roman", "cospa", "ランク"]
-PITCHER_DB_COLS = ["player_id", "名前", "年度", "所属球団", "背番号", "登板", "先発", "勝利", "敗戦", "セーブ", "ホールド", "HP", "完投", "完封", "無四球", "打者", "勝率", "投球回", "安打", "本塁打", "四球", "死球", "三振", "暴投", "ボーク", "失点", "自責点", "防御率", "投手WAR", "FIP", "WHIP", "K/9", "BB/9", "K/BB", "K-BB%", "BABIP", "LOB%", "unluck", "cospa", "ランク"]
+# ★ 変更：データベースの保存列に「is_active_season」を追加
+BATTER_DB_COLS = ["player_id", "名前", "年度", "所属球団", "is_active_season", "背番号", "試合", "打席", "打数", "得点", "安打", "二塁打", "三塁打", "本塁打", "塁打", "打点", "盗塁", "盗塁刺", "犠打", "犠飛", "四球", "死球", "三振", "併殺打", "打率", "長打率", "出塁率", "野手WAR", "wOBA", "wRC+", "OPS", "ISOp", "BABIP", "IsoD", "K%", "BB%", "roman", "cospa", "ランク"]
+PITCHER_DB_COLS = ["player_id", "名前", "年度", "所属球団", "is_active_season", "背番号", "登板", "先発", "勝利", "敗戦", "セーブ", "ホールド", "HP", "完投", "完封", "無四球", "打者", "勝率", "投球回", "安打", "本塁打", "四球", "死球", "三振", "暴投", "ボーク", "失点", "自責点", "防御率", "投手WAR", "FIP", "WHIP", "K/9", "BB/9", "K/BB", "K-BB%", "BABIP", "LOB%", "unluck", "cospa", "ランク"]
 
 def safe_float(val):
     try:
@@ -83,11 +84,8 @@ def parse_salary_to_oku(val_str):
     return total_man / 10000.0
 
 
-# ★ 追加：新球団の選手を「farm_players」テーブルにのみ事前登録する安全機能
 def sync_farm_only_roster():
     print("🔄 オイシックス・ハヤテの選手を探索し、専用マスター(farm_players)を更新します...")
-    
-    # 二重登録防止のため、既存の player_id (YahooID) を取得
     res_main = supabase.table("players").select("player_id").execute()
     res_farm = supabase.table("farm_players").select("player_id").execute()
     existing_ids = {str(p["player_id"]) for p in (res_main.data + res_farm.data)}
@@ -103,10 +101,7 @@ def sync_farm_only_roster():
             if not match: continue
             
             yahoo_id = match.group(1)
-            
-            # すでに登録済みならスルー
-            if yahoo_id in existing_ids:
-                continue
+            if yahoo_id in existing_ids: continue
 
             texts = list(a.stripped_strings)
             if not texts: continue
@@ -138,9 +133,7 @@ def sync_farm_only_roster():
         print("✅ 新規ファーム選手はいませんでした。")
 
 
-# 🚀 【改修】マスターデータを「スポナビID」をキーにした辞書にする
 MASTER_PLAYER_MAP_BY_YAHOO = {}
-# NPB公式の選手一覧から名前で引くためのバックアップ（NPBファームページ用）
 MASTER_PLAYER_MAP_BY_NAME = {}
 
 def fetch_master():
@@ -153,7 +146,6 @@ def fetch_master():
         salary = parse_salary_to_oku(p.get("salary_estimated", ""))
         name = re.sub(r'\s+', '', unicodedata.normalize('NFKC', p["player_name"]))
 
-        # A. スポナビIDをキーにする（1軍データ用）
         if p.get("sportsnavi_id"):
             s_id = str(p["sportsnavi_id"]).strip()
             MASTER_PLAYER_MAP_BY_YAHOO[s_id] = {
@@ -162,7 +154,6 @@ def fetch_master():
                 "salary_oku": salary
             }
         
-        # B. 名前をキーにする（スポナビIDがないNPB公式ファームページ用）
         MASTER_PLAYER_MAP_BY_NAME[name] = {
             "id": pid,
             "name": p["player_name"],
@@ -186,7 +177,6 @@ def scrape_yahoo_first_team(team_name, team_id, mode):
         p_a = tds[cols.index("選手名")].find("a") if "選手名" in cols else None
         if not p_a: continue
 
-        # 🚀 【改修】名前テキストではなく、href内のスポナビIDをキーにする
         href = p_a.get("href", "")
         match = re.search(r'/player/(\d+)', href)
         if not match: continue
@@ -198,9 +188,10 @@ def scrape_yahoo_first_team(team_name, team_id, mode):
         p_info = MASTER_PLAYER_MAP_BY_YAHOO[yahoo_id]
         s = {
             "player_id": p_info["id"], 
-            "名前": p_info["name"], # DB保存名は公式名を優先
+            "名前": p_info["name"], 
             "年度": 2026, 
             "所属球団": TEAM_NAME_MAP.get(team_name, team_name),
+            "is_active_season": True,  # ★ ここが動的データとしてTrueになる！
             "_salary_oku": p_info["salary_oku"] 
         }
         
@@ -222,7 +213,6 @@ def scrape_yahoo_first_team(team_name, team_id, mode):
 
 
 def scrape_npb_farm(team_name, team_code, mode):
-    # NPB公式ファームページはIDがないため、引き続き名前マッチング（正規化強化）を使用
     prefix = "idb2" if mode == "batting" else "idp2"
     url = f"https://npb.jp/bis/2026/stats/{prefix}_{team_code}.html"
     res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -251,6 +241,7 @@ def scrape_npb_farm(team_name, team_code, mode):
                 "名前": p_info["name"], 
                 "年度": 2026, 
                 "所属球団": TEAM_NAME_MAP.get(team_name, team_name),
+                "is_active_season": True,  # ★ ここが動的データとしてTrueになる！
                 "_salary_oku": p_info["salary_oku"] 
             }
             
@@ -394,6 +385,17 @@ def process_league(teams_dict, is_farm=False):
 
 
 def main():
+    # ★ 追加：すべての今年度のデータを一旦「静的データ（False）」にリセットする
+    # この処理の直後に、現在の球団のデータのみが「True」で上書きされるため、
+    # 移籍前の旧球団のデータはFalseのまま歴史として残り続けます！
+    print("🧹 今年度の is_active_season フラグを一旦リセットしています...")
+    tables = ["batting_stats", "pitching_stats", "farm_batting_stats", "farm_pitching_stats"]
+    for t in tables:
+        try:
+            supabase.table(t).update({"is_active_season": False}).eq("年度", 2026).execute()
+        except Exception as e:
+            print(f"⚠️ {t} のリセット中にエラーが発生しましたが継続します: {e}")
+
     # 1. まずは安全に、新球団の選手のみを「farm_players」に事前同期
     sync_farm_only_roster()
     
