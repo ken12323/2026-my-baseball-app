@@ -226,36 +226,36 @@ export default function PlayerDetail() {
         processStats(allP2.data || [], true, 2);
 
         const mergedArray = Array.from(statsMap.values());
-        
-        const getTeamInYear = (year: number) => {
-          const stats = mergedArray.filter((s: any) => s.年度 === year);
-          if (stats.length === 1) return stats[0].所属球団;
-          return null;
-        };
 
         const merged = mergedArray.sort((a: any, b: any) => {
-          // 1. 基本は年度の降順（新しい年が上）
+          // 1. 年度降順（新しい順）
           if (b.年度 !== a.年度) return b.年度 - a.年度;
           
           // 2. 1軍・2軍の昇順
           if (a.level !== b.level) return a.level - b.level;
           
-          // 3. 同年度・同レベル（移籍）の場合、新しい球団（上）→ 古い球団（下）にする
-          const teamPrevYear = getTeamInYear(a.年度 - 1);
-          if (teamPrevYear) {
-            if (a.所属球団 === teamPrevYear) return 1;
-            if (b.所属球団 === teamPrevYear) return -1;
-          }
+          // 3. 移籍対応（新しい球団を上に、古い球団を下にする）
+          // 前年・翌年のすべての球団リストを取得（1軍2軍混在に対応）
+          const teamsPrev = mergedArray.filter((s: any) => s.年度 === a.年度 - 1).map((s: any) => s.所属球団);
+          const teamsNext = mergedArray.filter((s: any) => s.年度 === a.年度 + 1).map((s: any) => s.所属球団);
+
+          // aが前年の球団と同じならaは「古い」ので下に下げる (return 1)
+          if (teamsPrev.includes(a.所属球団) && !teamsPrev.includes(b.所属球団)) return 1;
+          if (teamsPrev.includes(b.所属球団) && !teamsPrev.includes(a.所属球団)) return -1;
           
-          const teamNextYear = getTeamInYear(a.年度 + 1);
-          if (teamNextYear) {
-            if (a.所属球団 === teamNextYear) return -1;
-            if (b.所属球団 === teamNextYear) return 1;
-          }
-          
-          // 前後のデータがない場合、現在の所属球団を「一番新しい（上）」とする
-          if (a.所属球団 === pData.team_name || (pData.team_name && a.所属球団.includes(pData.team_name.replace('北海道', '').replace('福岡', '')))) return -1;
-          if (b.所属球団 === pData.team_name || (pData.team_name && b.所属球団.includes(pData.team_name.replace('北海道', '').replace('福岡', '')))) return 1;
+          // aが翌年の球団と同じならaは「新しい」ので上に上げる (return -1)
+          if (teamsNext.includes(a.所属球団) && !teamsNext.includes(b.所属球団)) return -1;
+          if (teamsNext.includes(b.所属球団) && !teamsNext.includes(a.所属球団)) return 1;
+
+          // 上記で判定できない場合、現在の所属球団（pData.team_name）を「新しい（上）」とする
+          // ※ 中日と中　日（スペースあり）の表記揺れに対応するため、空白を消して判定
+          const clean = (str: string) => (str || '').replace(/\s+/g, '');
+          const currentTeam = clean(pData.team_name);
+          const teamA = clean(a.所属球団);
+          const teamB = clean(b.所属球団);
+
+          if (teamA === currentTeam || teamA.includes(currentTeam)) return -1;
+          if (teamB === currentTeam || teamB.includes(currentTeam)) return 1;
 
           return 0;
         });
