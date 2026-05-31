@@ -228,34 +228,37 @@ export default function PlayerDetail() {
         const mergedArray = Array.from(statsMap.values());
 
         const merged = mergedArray.sort((a: any, b: any) => {
-          // 1. 年度降順（新しい順）
-          if (b.年度 !== a.年度) return b.年度 - a.年度;
+          // 年度を確実に数値に変換して計算
+          const yearA = Number(a.年度);
+          const yearB = Number(b.年度);
           
-          // 2. 1軍・2軍の昇順
+          // 1. 年度降順（新しい年が上）
+          if (yearB !== yearA) return yearB - yearA;
+          
+          // 2. 1軍・2軍の昇順（1軍が上）
           if (a.level !== b.level) return a.level - b.level;
           
-          // 3. 移籍対応（新しい球団を上に、古い球団を下にする）
-          // 前年・翌年のすべての球団リストを取得（1軍2軍混在に対応）
-          const teamsPrev = mergedArray.filter((s: any) => s.年度 === a.年度 - 1).map((s: any) => s.所属球団);
-          const teamsNext = mergedArray.filter((s: any) => s.年度 === a.年度 + 1).map((s: any) => s.所属球団);
+          // 3. 移籍対応：同年度の場合、「新しい球団（上） → 古い球団（下）」にする
+          const teamsPrev = mergedArray.filter((s: any) => Number(s.年度) === yearA - 1).map((s: any) => s.所属球団);
+          const teamsNext = mergedArray.filter((s: any) => Number(s.年度) === yearA + 1).map((s: any) => s.所属球団);
 
-          // aが前年の球団と同じならaは「古い」ので下に下げる (return 1)
           if (teamsPrev.includes(a.所属球団) && !teamsPrev.includes(b.所属球団)) return 1;
           if (teamsPrev.includes(b.所属球団) && !teamsPrev.includes(a.所属球団)) return -1;
           
-          // aが翌年の球団と同じならaは「新しい」ので上に上げる (return -1)
           if (teamsNext.includes(a.所属球団) && !teamsNext.includes(b.所属球団)) return -1;
           if (teamsNext.includes(b.所属球団) && !teamsNext.includes(a.所属球団)) return 1;
 
-          // 上記で判定できない場合、現在の所属球団（pData.team_name）を「新しい（上）」とする
-          // ※ 中日と中　日（スペースあり）の表記揺れに対応するため、空白を消して判定
+          // 前後年のデータがない場合の最終手段：現在の所属球団を「新しい（上）」とする
           const clean = (str: string) => (str || '').replace(/\s+/g, '');
-          const currentTeam = clean(pData.team_name);
+          const currentTeam = clean(pData?.team_name || '');
           const teamA = clean(a.所属球団);
           const teamB = clean(b.所属球団);
 
-          if (teamA === currentTeam || teamA.includes(currentTeam)) return -1;
-          if (teamB === currentTeam || teamB.includes(currentTeam)) return 1;
+          const isA_Current = currentTeam.includes(teamA) || teamA.includes(currentTeam);
+          const isB_Current = currentTeam.includes(teamB) || teamB.includes(currentTeam);
+
+          if (isA_Current && !isB_Current) return -1;
+          if (isB_Current && !isA_Current) return 1;
 
           return 0;
         });
