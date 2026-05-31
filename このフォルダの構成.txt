@@ -1,0 +1,58 @@
+① サイト維持・構築に「機能している必須ファイル」
+
+これらは絶対に消さないでください。サイトの心臓部です。
+
+【Next.js (フロントエンド) 関連】
+
+    app/ フォルダ内のファイル全般 (page.tsx, layout.tsx, globals.css など)
+
+    lib/supabase.ts (DB接続設定)
+
+    package.json, package-lock.json (Node.jsパッケージ管理)
+
+    next.config.ts, tsconfig.json, postcss.config.mjs, eslint.config.mjs (各種設定ファイル)
+
+    .env.local (環境変数・パスワード等)
+
+    .gitignore (Gitの除外設定)
+
+【データ更新 (バックエンド) 関連】
+
+    .github/workflows/daily_scrape.yml (GitHub Actionsの自動実行設定)
+
+    sync_team_stats.py (私たちが一緒に完成させたスタッツ計算・更新の要)
+
+    requirements.txt (Pythonのライブラリリスト)
+
+    データ集計（2軍用）: sync_profiles.py (2軍プロフィール用)
+
+
+【ドキュメント（残しておくと便利）】
+
+    NPBデータ更新・完全運用マニュア...
+
+    README.md, MEMO.md, AGENTS.md, CLAUDE.md
+
+メインディレクトリ（そのまま残して開発を続けるもの）
+
+    フロントエンド: app/ 配下（※ app/api/sync-stats/ は削除済）
+
+    設定ファイル: package.json, next.config.ts, .env.local などの基礎ファイル
+
+    自動処理: .github/workflows/ (自動化の司令塔)
+
+    データ集計（本番）: sync_team_stats.py (1軍スタッツ計算用)
+
+    データ集計（2軍用）: sync_profiles.py (2軍プロフィール用)
+
+    データ集計（開発中）: fetch_daily_performance.py (日次成績用)
+
+📦 _archive フォルダ（新しく作って放り込むもの）
+
+    scripts/ フォルダごと（enrich_player_profiles.js など過去の遺物）
+
+    main.py（過去の計算スクリプト）
+
+    sync_team_stats - コピー.py などのバックアップ
+
+    過去にアップロードし終えた .csv ファイル群

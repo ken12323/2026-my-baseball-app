@@ -197,11 +197,14 @@ export default function PlayerDetail() {
         const processStats = (data: any[] | null, isPitching: boolean, level: number) => {
           (data || []).forEach((stat: any) => {
             const year = Number(stat.年度);
-            const key = `${year}_${level}`;
+            // ▼ 変更後：球団名も含めて一意のキーにする（移籍対応）
+            const teamName = stat.所属球団 || pData.team_name;
+            const key = `${year}_${level}_${teamName}`;
+            // ▼ 変更後
             const existing = statsMap.get(key) || { 
               年度: year, 
               level,
-              所属球団: stat.所属球団 || pData.team_name, 
+              所属球団: teamName, 
               hasBatting: false, 
               hasPitching: false,
               b: {}, p: {} 
@@ -214,7 +217,7 @@ export default function PlayerDetail() {
               existing.b = stat;
             }
             statsMap.set(key, existing);
-          });
+          });                                     
         };
 
         processStats(allB1.data || [], false, 1);
