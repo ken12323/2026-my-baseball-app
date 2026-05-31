@@ -227,6 +227,9 @@ export default function PlayerDetail() {
 
         const mergedArray = Array.from(statsMap.values());
         
+        console.log("=== 🔍 [DEBUG] ソート処理開始 ===");
+        console.log("ソート前:", mergedArray.map((s: any) => `${s.年度}_${s.所属球団}`).join(" ➡️ "));
+
         const getTeamInYear = (year: number) => {
           const stats = mergedArray.filter((s: any) => s.年度 === year);
           if (stats.length === 1) return stats[0].所属球団;
@@ -234,34 +237,48 @@ export default function PlayerDetail() {
         };
 
         const merged = mergedArray.sort((a: any, b: any) => {
-          // 1. 基本は年度の降順（新しい年が上）
           if (b.年度 !== a.年度) return b.年度 - a.年度;
-          
-          // 2. 1軍・2軍の昇順
           if (a.level !== b.level) return a.level - b.level;
           
-          // 3. 【修正】同年度・同レベル（移籍）の場合、「新しい球団（上） → 古い球団（下）」にする！
+          // --- ここから同年度（2023年など）の判定 ---
+          console.log(`⚖️ 比較発生: ${a.年度}年の [A:${a.所属球団}] vs [B:${b.所属球団}]`);
+          
           const teamPrevYear = getTeamInYear(a.年度 - 1);
-          if (teamPrevYear) {
-            // 前年の所属球団と同じなら「古い（移籍前）」チーム。下にしたいので return 1
-            if (a.所属球団 === teamPrevYear) return 1;
-            if (b.所属球団 === teamPrevYear) return -1;
-          }
-          
           const teamNextYear = getTeamInYear(a.年度 + 1);
-          if (teamNextYear) {
-            // 翌年の所属球団と同じなら「新しい（移籍後）」チーム。上にしたいので return -1
-            if (a.所属球団 === teamNextYear) return -1;
-            if (b.所属球団 === teamNextYear) return 1;
+          console.log(`   👉 前年(${a.年度 - 1})の球団: ${teamPrevYear} / 翌年(${a.年度 + 1})の球団: ${teamNextYear}`);
+
+          if (teamPrevYear) {
+            if (a.所属球団 === teamPrevYear) {
+              console.log(`   ✅ [A:${a.所属球団}] は前年と同じなので「古い」。下へ移動（return 1）`);
+              return 1;
+            }
+            if (b.所属球団 === teamPrevYear) {
+              console.log(`   ✅ [B:${b.所属球団}] は前年と同じなので「古い」。下へ移動（return -1）`);
+              return -1;
+            }
           }
           
-          // 前後のデータがない場合、現在の所属球団を「一番新しい（上）」とする
+          if (teamNextYear) {
+            if (a.所属球団 === teamNextYear) {
+              console.log(`   ✅ [A:${a.所属球団}] は翌年と同じなので「新しい」。上へ移動（return -1）`);
+              return -1;
+            }
+            if (b.所属球団 === teamNextYear) {
+              console.log(`   ✅ [B:${b.所属球団}] は翌年と同じなので「新しい」。上へ移動（return 1）`);
+              return 1;
+            }
+          }
+          
+          console.log(`   ⚠️ 前後年で判定できず！フォールバック条件に移行します`);
           if (a.所属球団 === pData.team_name || (pData.team_name && a.所属球団.includes(pData.team_name.replace('北海道', '').replace('福岡', '')))) return -1;
           if (b.所属球団 === pData.team_name || (pData.team_name && b.所属球団.includes(pData.team_name.replace('北海道', '').replace('福岡', '')))) return 1;
 
           return 0;
         });
         
+        console.log("ソート後:", merged.map((s: any) => `${s.年度}_${s.所属球団}`).join(" ➡️ "));
+        console.log("=== 🏁 [DEBUG] ソート処理完了 ===");
+
         setMergedStats(merged);
 
         if (!merged.some((s: any) => s.level === 1) && merged.some((s: any) => s.level === 2)) {
