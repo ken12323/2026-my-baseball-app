@@ -121,10 +121,11 @@ export default function PlayerDetail() {
     });
     const era = ip > 0 ? (er * 9 / ip) : 0;
     
-    // 投球回を「100.1」の形式に戻す
-    const ipInt = Math.floor(ip);
-    const ipFrac = Math.round((ip - ipInt) * 3);
-    const displayIp = ipFrac === 0 ? ipInt.toString() : `${ipInt}.${ipFrac}`;
+    // 投球回を一度「総アウト数」に変換して小数の誤差を完全に消し去る
+    const totalOuts = Math.round(ip * 3);
+    const displayIpInt = Math.floor(totalOuts / 3);
+    const displayIpFrac = totalOuts % 3;
+    const displayIp = displayIpFrac === 0 ? displayIpInt.toString() : `${displayIpInt}.${displayIpFrac}`;
 
     return { 登板: g, 勝利: w, 敗北: l, セーブ: sv, HP: hp, 投球回: displayIp, 奪三振: so, 防御率: era.toFixed(2) };
   };
