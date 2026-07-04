@@ -129,6 +129,21 @@ export default function PlayerDetail() {
   
   // タイムラインデータを管理するステート
   const [salaryHistory, setSalaryHistory] = useState<any[]>([]);
+  
+  // 💡【デバッグボード強化】：型エラーメッセージを完全に追跡するログステート
+  const [debugLog, setDebugLog] = useState<{
+    rawId: string;
+    stringId: string;
+    numericId: number;
+    errorMsg: string | null;
+    searchRoute: string;
+  }>({
+    rawId: String(id),
+    stringId: String(id).padStart(8, '0'),
+    numericId: Number(id),
+    errorMsg: null,
+    searchRoute: '未開始'
+  });
 
   const dotFormat = (val: any) => {
     const s = toF(val).toFixed(3);
@@ -209,6 +224,7 @@ export default function PlayerDetail() {
       try {
         setLoading(true);
         const safeId = String(id).padStart(8, '0');
+        const numId = Number(id);
 
         let pData = null;
         const { data: p1 } = await supabase.from('players').select('*').eq('player_id', safeId).single();
@@ -224,21 +240,64 @@ export default function PlayerDetail() {
 
         const nameNoSpace = pData.player_name.replace(/\s+/g, '').split('').join('%');
         
-        // 💡 変更点：0埋め文字列型と生数値型のミスマッチを完全中和する「.or()` 防弾クエリにアップデート！
-        const [allP1, allB1, allP2, allB2, salariesRes] = await Promise.all([
+        // 1. まず成績データを並行ロード
+        const [allP1, allB1, allP2, allB2] = await Promise.all([
           supabase.from('pitching_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`),
           supabase.from('batting_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`),
           supabase.from('farm_pitching_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`),
-          supabase.from('farm_batting_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`),
-          supabase.from('player_salaries')
-            .select('year, salary, team_name')
-            .or(`player_id.eq.${safeId},player_id.eq.${Number(id)}`)
-            .order('year', { ascending: true })
+          supabase.from('farm_batting_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`)
         ]);
 
-        if (salariesRes.data) {
-          setSalaryHistory(salariesRes.data);
+        // 💡 2段構え独立フォールバック検索：SQL型クラッシュを100%回避するロジック
+        let finalSalaries: any[] = [];
+        let errorTrack: string | null = null;
+        let routeTrack = '未検出';
+
+        // ルート①：マスタと揃えた「8桁0埋め文字列型」でまずは安全に単独アタック
+        const resStr = await supabase.from('player_salaries')
+          .select('year, salary, team_name')
+          .eq('player_id', safeId)
+          .order('year', { ascending: true });
+
+        if (resStr.error) {
+          errorTrack = `ルート1エラー: ${resStr.error.message}`;
         }
+
+        if (resStr.data && resStr.data.length > 0) {
+          finalSalaries = resStr.data;
+          routeTrack = 'ルート① (8桁文字列マッチ成功)';
+        } else {
+          // ルート②：文字列型で0件または型エラーだった場合、純粋な「数値型」に切り替えて単独アタック
+          if (!isNaN(numId)) {
+            const resNum = await supabase.from('player_salaries')
+              .select('year, salary, team_name')
+              .eq('player_id', numId)
+              .order('year', { ascending: true });
+
+            if (resNum.error) {
+              errorTrack = (errorTrack ? errorTrack + ' / ' : '') + `ルート2エラー: ${resNum.error.message}`;
+            }
+
+            if (resNum.data && resNum.data.length > 0) {
+              finalSalaries = resNum.data;
+              routeTrack = 'ルート② (生数値マッチ成功)';
+            } else {
+              routeTrack = 'ルート①・②ともに合致データなし (NULL退避組の可能性)';
+            }
+          }
+        }
+
+        // デバッグログの更新
+        setDebugLog({
+          rawId: String(id),
+          stringId: safeId,
+          numericId: numId,
+          errorMsg: errorTrack,
+          searchRoute: routeTrack
+        });
+
+        // 最終データをステートへ格納
+        setSalaryHistory(finalSalaries);
 
         const statsMap = new Map();
         const processStats = (data: any[] | null, isPitching: boolean, level: number) => {
@@ -670,13 +729,16 @@ export default function PlayerDetail() {
           </div>
         </div>
 
-        {/* 🛠️ インライン結合ボード＆グラフエリア（防弾ORクエリ連動版） */}
+        {/* 🛠️ インライン結合ボード＆グラフエリア（2段階フォールバック検索対応版） */}
         <div className="bg-white rounded-[2rem] p-4 sm:p-6 shadow-sm border border-slate-100 mb-8 space-y-4 text-black">
           
-          {/* 🔍 データベース直結診断ボード */}
+          {/* 🔍 強化型・データベース直結診断ボード */}
           <div className="bg-slate-900 text-emerald-400 p-3 rounded-xl text-[11px] font-mono leading-relaxed shadow-inner">
             <p className="font-bold text-white mb-1">🔍 データベース直結診断ボード</p>
+            <p>・検出ルート: <span className="text-yellow-300 font-bold">{debugLog.searchRoute}</span></p>
             <p>・取得レコード総数: <span className="text-yellow-300 font-bold">{salaryHistory?.length ?? 0} 件</span></p>
+            <p>・型検証 [文字列版]: <span className="text-blue-300">{debugLog.stringId}</span> / [数値版]: <span className="text-blue-300">{debugLog.numericId}</span></p>
+            {debugLog.errorMsg && <p className="text-rose-400 font-bold">⚠️ 例外ログ: {debugLog.errorMsg}</p>}
             <p className="text-slate-400 mt-1">・届いている生データ(JSON):</p>
             <pre className="text-slate-300 bg-black/40 p-2 rounded mt-1 overflow-x-auto max-h-24 scrollbar-none">
               {JSON.stringify(salaryHistory, null, 2)}
