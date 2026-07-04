@@ -79,7 +79,7 @@ const getGeneration = (birthDateStr: string | undefined | null) => {
 };
 
 // ==========================================
-// 💴 インライン統合用：金額フォーマット関数
+// 💴 金額フォーマット関数
 // ==========================================
 const formatSalaryLabel = (value: number): string => {
   if (value >= 100000000) {
@@ -112,7 +112,7 @@ const SalaryCustomTooltip = ({ active, payload }: any): React.ReactElement | nul
 };
 
 // ==========================================
-// メメイン・コンポーネント
+// メイン・コンポーネント
 // ==========================================
 export default function PlayerDetail() {
   const { id } = useParams();
@@ -224,13 +224,16 @@ export default function PlayerDetail() {
 
         const nameNoSpace = pData.player_name.replace(/\s+/g, '').split('').join('%');
         
-        // player_salariesからの年俸履歴取得
+        // 💡 変更点：0埋め文字列型と生数値型のミスマッチを完全中和する「.or()` 防弾クエリにアップデート！
         const [allP1, allB1, allP2, allB2, salariesRes] = await Promise.all([
           supabase.from('pitching_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`),
           supabase.from('batting_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`),
           supabase.from('farm_pitching_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`),
           supabase.from('farm_batting_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`),
-          supabase.from('player_salaries').select('year, salary, team_name').eq('player_id', safeId).order('year', { ascending: true })
+          supabase.from('player_salaries')
+            .select('year, salary, team_name')
+            .or(`player_id.eq.${safeId},player_id.eq.${Number(id)}`)
+            .order('year', { ascending: true })
         ]);
 
         if (salariesRes.data) {
@@ -667,10 +670,10 @@ export default function PlayerDetail() {
           </div>
         </div>
 
-        {/* 🛠️ 外部コンポーネントを廃止し、100%確実に画面表示させるインライン結合ボード＆グラフエリア */}
+        {/* 🛠️ インライン結合ボード＆グラフエリア（防弾ORクエリ連動版） */}
         <div className="bg-white rounded-[2rem] p-4 sm:p-6 shadow-sm border border-slate-100 mb-8 space-y-4 text-black">
           
-          {/* 🔍 原因究明ボード（直接埋め込み型） */}
+          {/* 🔍 データベース直結診断ボード */}
           <div className="bg-slate-900 text-emerald-400 p-3 rounded-xl text-[11px] font-mono leading-relaxed shadow-inner">
             <p className="font-bold text-white mb-1">🔍 データベース直結診断ボード</p>
             <p>・取得レコード総数: <span className="text-yellow-300 font-bold">{salaryHistory?.length ?? 0} 件</span></p>
