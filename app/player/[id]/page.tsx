@@ -130,19 +130,19 @@ export default function PlayerDetail() {
   // タイムラインデータを管理するステート
   const [salaryHistory, setSalaryHistory] = useState<any[]>([]);
   
-  // 💡【デバッグボード強化】：型エラーメッセージを完全に追跡するログステート
+  // 💡【デバッグボード強化】：本番でのDB内実態を完全に可視化するステート
   const [debugLog, setDebugLog] = useState<{
-    rawId: string;
     stringId: string;
     numericId: number;
     errorMsg: string | null;
     searchRoute: string;
+    foundPlayerIdInDB: string;
   }>({
-    rawId: String(id),
     stringId: String(id).padStart(8, '0'),
     numericId: Number(id),
     errorMsg: null,
-    searchRoute: '未開始'
+    searchRoute: '未開始',
+    foundPlayerIdInDB: 'データ未検出'
   });
 
   const dotFormat = (val: any) => {
@@ -248,55 +248,71 @@ export default function PlayerDetail() {
           supabase.from('farm_batting_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`)
         ]);
 
-        // 💡 2段構え独立フォールバック検索：SQL型クラッシュを100%回避するロジック
+        // 💡 3段階ディープ・フォールバック検索：ID型不適合、およびNULL隔離退避を完全救済するエンジン
         let finalSalaries: any[] = [];
         let errorTrack: string | null = null;
         let routeTrack = '未検出';
+        let idInDBTrack = 'データ未検出';
 
-        // ルート①：マスタと揃えた「8桁0埋め文字列型」でまずは安全に単独アタック
+        // 【ルート①】：8桁0埋め文字列型で安全に単独アタック
         const resStr = await supabase.from('player_salaries')
-          .select('year, salary, team_name')
+          .select('player_id, year, salary, team_name')
           .eq('player_id', safeId)
           .order('year', { ascending: true });
 
-        if (resStr.error) {
-          errorTrack = `ルート1エラー: ${resStr.error.message}`;
-        }
+        if (resStr.error) errorTrack = `ルート1エラー: ${resStr.error.message}`;
 
         if (resStr.data && resStr.data.length > 0) {
           finalSalaries = resStr.data;
-          routeTrack = 'ルート① (8桁文字列マッチ成功)';
+          routeTrack = 'ルート① (8桁文字列型IDマッチ成功)';
+          idInDBTrack = String(resStr.data[0].player_id);
         } else {
-          // ルート②：文字列型で0件または型エラーだった場合、純粋な「数値型」に切り替えて単独アタック
+          // 【ルート②】：数値型IDに切り替えて独立単独アタック（PostgreSQL型エラーの完全回避）
           if (!isNaN(numId)) {
             const resNum = await supabase.from('player_salaries')
-              .select('year, salary, team_name')
+              .select('player_id, year, salary, team_name')
               .eq('player_id', numId)
               .order('year', { ascending: true });
 
-            if (resNum.error) {
-              errorTrack = (errorTrack ? errorTrack + ' / ' : '') + `ルート2エラー: ${resNum.error.message}`;
-            }
+            if (resNum.error) errorTrack = (errorTrack ? errorTrack + ' / ' : '') + `ルート2エラー: ${resNum.error.message}`;
 
             if (resNum.data && resNum.data.length > 0) {
               finalSalaries = resNum.data;
-              routeTrack = 'ルート② (生数値マッチ成功)';
-            } else {
-              routeTrack = 'ルート①・②ともに合致データなし (NULL退避組の可能性)';
+              routeTrack = 'ルート② (生数値型IDマッチ成功)';
+              idInDBTrack = String(resNum.data[0].player_id);
             }
           }
         }
 
-        // デバッグログの更新
+        // 【ルート③（新設）】：IDでの検索が全滅した場合、グラゼニ登録名からダイレクトハント（NULL隔離組の救済）
+        if (finalSalaries.length === 0 && pData.player_name) {
+          const cleanName = pData.player_name.replace(/\s+/g, '');
+          const resName = await supabase.from('player_salaries')
+            .select('player_id, year, salary, team_name, player_name')
+            .or(`player_name.ilike.%${cleanName}%,player_name.ilike.%${pData.player_name.split('').join('%')}%`)
+            .order('year', { ascending: true });
+
+          if (resName.error) errorTrack = (errorTrack ? errorTrack + ' / ' : '') + `ルート3エラー: ${resName.error.message}`;
+
+          if (resName.data && resName.data.length > 0) {
+            finalSalaries = resName.data;
+            routeTrack = `ルート③ (名前ハント救済成功 / グラゼニ名: ${resName.data[0].player_name})`;
+            idInDBTrack = resName.data[0].player_id === null ? 'NULL (未適合・隔離退避状態)' : String(resName.data[0].player_id);
+          } else {
+            routeTrack = '全ルートで検出失敗 (グラゼニ側に該当選手なし、または別名登録の可能性)';
+          }
+        }
+
+        // 診断ステートを確定
         setDebugLog({
-          rawId: String(id),
           stringId: safeId,
           numericId: numId,
           errorMsg: errorTrack,
-          searchRoute: routeTrack
+          searchRoute: routeTrack,
+          foundPlayerIdInDB: idInDBTrack
         });
 
-        // 最終データをステートへ格納
+        // 最終データをグラフ用ステートへ格納
         setSalaryHistory(finalSalaries);
 
         const statsMap = new Map();
@@ -334,7 +350,7 @@ export default function PlayerDetail() {
           if (teamsPrev.includes(a.所属球団) && !teamsPrev.includes(b.所属球団)) return 1;
           if (teamsPrev.includes(b.所属球団) && !teamsPrev.includes(a.所属球団)) return -1;
           if (teamsNext.includes(a.所属球団) && !teamsNext.includes(b.所属球団)) return -1;
-          if (teamsNext.includes(b.所属球団) && !teamsNext.includes(a.所属球団)) return 1;
+          if (teamsNext.includes(b.オープン) && !teamsNext.includes(a.所属球団)) return 1;
           const clean = (str: string) => (str || '').replace(/\s+/g, '');
           const currentTeam = clean(pData?.team_name || '');
           const teamA = clean(a.所属球団); const teamB = clean(b.所属球団);
@@ -729,13 +745,14 @@ export default function PlayerDetail() {
           </div>
         </div>
 
-        {/* 🛠️ インライン結合ボード＆グラフエリア（2段階フォールバック検索対応版） */}
+        {/* 🛠️ インライン結合ボード＆グラフエリア（3段階ディープハント対応版） */}
         <div className="bg-white rounded-[2rem] p-4 sm:p-6 shadow-sm border border-slate-100 mb-8 space-y-4 text-black">
           
-          {/* 🔍 強化型・データベース直結診断ボード */}
+          {/* 🔍 超強化型・データベース直結診断ボード */}
           <div className="bg-slate-900 text-emerald-400 p-3 rounded-xl text-[11px] font-mono leading-relaxed shadow-inner">
             <p className="font-bold text-white mb-1">🔍 データベース直結診断ボード</p>
             <p>・検出ルート: <span className="text-yellow-300 font-bold">{debugLog.searchRoute}</span></p>
+            <p>・DBに格納されているplayer_idの実態: <span className="text-orange-400 font-bold">{debugLog.foundPlayerIdInDB}</span></p>
             <p>・取得レコード総数: <span className="text-yellow-300 font-bold">{salaryHistory?.length ?? 0} 件</span></p>
             <p>・型検証 [文字列版]: <span className="text-blue-300">{debugLog.stringId}</span> / [数値版]: <span className="text-blue-300">{debugLog.numericId}</span></p>
             {debugLog.errorMsg && <p className="text-rose-400 font-bold">⚠️ 例外ログ: {debugLog.errorMsg}</p>}
