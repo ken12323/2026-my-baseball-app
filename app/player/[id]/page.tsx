@@ -130,7 +130,7 @@ export default function PlayerDetail() {
   // タイムラインデータを管理するステート
   const [salaryHistory, setSalaryHistory] = useState<any[]>([]);
   
-  // 💡【デバッグボード強化】：本番でのDB内実態を完全に可視化するステート
+  // デバッグボード用ステート
   const [debugLog, setDebugLog] = useState<{
     stringId: string;
     numericId: number;
@@ -240,7 +240,6 @@ export default function PlayerDetail() {
 
         const nameNoSpace = pData.player_name.replace(/\s+/g, '').split('').join('%');
         
-        // 1. まず成績データを並行ロード
         const [allP1, allB1, allP2, allB2] = await Promise.all([
           supabase.from('pitching_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`),
           supabase.from('batting_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`),
@@ -248,7 +247,6 @@ export default function PlayerDetail() {
           supabase.from('farm_batting_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`)
         ]);
 
-        // 💡 3段階ディープ・フォールバック検索：ID型不適合、およびNULL隔離退避を完全救済するエンジン
         let finalSalaries: any[] = [];
         let errorTrack: string | null = null;
         let routeTrack = '未検出';
@@ -284,26 +282,28 @@ export default function PlayerDetail() {
           }
         }
 
-        // 【ルート③（新設）】：IDでの検索が全滅した場合、グラゼニ登録名からダイレクトハント（NULL隔離組の救済）
+        // 【ルート③】：ID全滅時の名前ダイレクトハント（スペース中和完全強化版）
         if (finalSalaries.length === 0 && pData.player_name) {
-          const cleanName = pData.player_name.replace(/\s+/g, '');
+          // 💡【最重要パッチ】：マスタ側の姓名間の空白を完全に消去し、純粋な一連の漢字パターン（森%下%暢%仁）を生成
+          const strictCleanName = pData.player_name.replace(/[\s ]+/g, '');
+          const strictNamePattern = strictCleanName.split('').join('%');
+
           const resName = await supabase.from('player_salaries')
             .select('player_id, year, salary, team_name, player_name')
-            .or(`player_name.ilike.%${cleanName}%,player_name.ilike.%${pData.player_name.split('').join('%')}%`)
+            .or(`player_name.ilike.%${strictCleanName}%,player_name.ilike.%${strictNamePattern}%`)
             .order('year', { ascending: true });
 
           if (resName.error) errorTrack = (errorTrack ? errorTrack + ' / ' : '') + `ルート3エラー: ${resName.error.message}`;
 
           if (resName.data && resName.data.length > 0) {
             finalSalaries = resName.data;
-            routeTrack = `ルート③ (名前ハント救済成功 / グラゼニ名: ${resName.data[0].player_name})`;
+            routeTrack = `ルート③ (姓名スペース中和ハント成功 / グラゼニ名: ${resName.data[0].player_name})`;
             idInDBTrack = resName.data[0].player_id === null ? 'NULL (未適合・隔離退避状態)' : String(resName.data[0].player_id);
           } else {
             routeTrack = '全ルートで検出失敗 (グラゼニ側に該当選手なし、または別名登録の可能性)';
           }
         }
 
-        // 診断ステートを確定
         setDebugLog({
           stringId: safeId,
           numericId: numId,
@@ -312,7 +312,6 @@ export default function PlayerDetail() {
           foundPlayerIdInDB: idInDBTrack
         });
 
-        // 最終データをグラフ用ステートへ格納
         setSalaryHistory(finalSalaries);
 
         const statsMap = new Map();
@@ -350,7 +349,7 @@ export default function PlayerDetail() {
           if (teamsPrev.includes(a.所属球団) && !teamsPrev.includes(b.所属球団)) return 1;
           if (teamsPrev.includes(b.所属球団) && !teamsPrev.includes(a.所属球団)) return -1;
           if (teamsNext.includes(a.所属球団) && !teamsNext.includes(b.所属球団)) return -1;
-          if (teamsNext.includes(b.オープン) && !teamsNext.includes(a.所属球団)) return 1;
+          if (teamsNext.includes(b.所属球団) && !teamsNext.includes(a.所属球団)) return 1;
           const clean = (str: string) => (str || '').replace(/\s+/g, '');
           const currentTeam = clean(pData?.team_name || '');
           const teamA = clean(a.所属球団); const teamB = clean(b.所属球団);
@@ -675,7 +674,7 @@ export default function PlayerDetail() {
               <p className="text-slate-900 text-3xl font-black mt-2">{isPitcher ? pSaber.fip : bSaber.wrcPlus}</p>
             </div>
             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-              <span className="text-[10px] font-black text-slate-400 block mb-2 uppercase">{isPitcher ? '奪三振' : 'OPS'} <HelpIcon id="h2" text={isPitcher ? "投手が奪った三振の総数。圧倒的な投球能力を示す。" : "出塁率と長打率を足し合わせた、総合的な攻撃力を示す指標。"} benchmark={isPitcher ? "先発でシーズン100〜150個、200個でタイトル級。" : ".750で平均以上、.800で優秀、.900以上は球界を代表する強打者。"}/></span>
+              <span className="text-[10px] font-black text-slate-400 block mb-2 uppercase">{isPitcher ? '奪三振' : 'OPS'} <HelpIcon id="h2" text={isPitcher ? "投者が奪った三振の総数。圧倒的な投球能力を示す。" : "出塁率と長打率を足し合わせた、総合的な攻撃力を示す指標。"} benchmark={isPitcher ? "先発でシーズン100〜150個、200個でタイトル級。" : ".750で平均以上、.800で優秀、.900以上は球界を代表する強打者。"}/></span>
               <div className={rankBadge('S')}>STATUS</div>
               <p className="text-slate-900 text-3xl font-black mt-2">
                 {isPitcher ? (latestP.三振 || latestP.奪三振 || 0) : dotFormat(toF(latestB.出塁率) + toF(latestB.長打率) || toF(latestB.OPS))}
@@ -745,7 +744,7 @@ export default function PlayerDetail() {
           </div>
         </div>
 
-        {/* 🛠️ インライン結合ボード＆グラフエリア（3段階ディープハント対応版） */}
+        {/* 🛠️ インライン結合ボード＆グラフエリア（スペース中和完全強化版） */}
         <div className="bg-white rounded-[2rem] p-4 sm:p-6 shadow-sm border border-slate-100 mb-8 space-y-4 text-black">
           
           {/* 🔍 超強化型・データベース直結診断ボード */}
