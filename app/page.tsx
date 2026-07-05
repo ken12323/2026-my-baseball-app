@@ -250,12 +250,16 @@ function RankingList() {
   return (
     <div className="max-w-4xl mx-auto">
       
+      {/* 💴 変更：既存の2分割ナビゲーションに、年俸ランキングを調和させて3分割型へとスタイリッシュ拡張！ */}
       <div className="flex bg-slate-200 p-1.5 rounded-2xl mb-6 shadow-inner">
         <div className="flex-1 text-center py-3.5 rounded-xl text-sm font-black bg-white text-blue-900 shadow-sm flex items-center justify-center gap-2">
           <span className="text-lg">🌱</span> ルーツ別ランキング
         </div>
         <Link href="/ranking" className="flex-1 text-center py-3.5 rounded-xl text-sm font-black text-slate-500 hover:text-blue-900 transition-all flex items-center justify-center gap-2 hover:bg-slate-100/50">
           <span className="text-lg">🏆</span> NPB総合リーダーボード
+        </Link>
+        <Link href="/salaries?year=2026" className="flex-1 text-center py-3.5 rounded-xl text-sm font-black text-slate-500 hover:text-blue-900 transition-all flex items-center justify-center gap-2 hover:bg-slate-100/50">
+          <span className="text-lg">💴</span> 年俸ランキング
         </Link>
       </div>
 
@@ -335,7 +339,6 @@ function RankingList() {
             const rawName = category === 'draft_year' ? item.name.replace('年指名', '') : item.name;
             const detailUrl = `/roots/${CATEGORY_URL_MAP[category]}/${encodeURIComponent(rawName)}`;
 
-            // 🎨 エラー対策: クラス名を変数として外に出す
             const rowClass = `group bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden transition-all ${leagueType === '1軍' ? 'hover:border-blue-300' : 'hover:border-green-300'}`;
             const rankClass = `text-2xl font-black italic w-8 ${index < 3 ? (leagueType === '1軍' ? 'text-blue-600' : 'text-green-500') : 'text-slate-200'}`;
             const nameClass = `text-xl font-bold text-slate-800 underline decoration-4 underline-offset-4 ${leagueType === '1軍' ? 'decoration-blue-100' : 'decoration-green-100'}`;
@@ -416,6 +419,45 @@ function RankingList() {
           })}
         </div>
       )}
+
+      {/* 💴 追加：下部のルーツ別アコーディオン群の最後にドッキングした「年俸特設データセンター」のバナー導線！ */}
+      <div className="mt-4 space-y-3">
+        <details className="group bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden transition-all hover:border-blue-300">
+          <summary className="flex items-center justify-between p-5 cursor-pointer list-none">
+            <div className="flex items-center gap-5 flex-1">
+              <div className="text-2xl font-black italic w-8 text-blue-600">📊</div>
+              <div>
+                <h2 className="text-xl font-bold text-slate-800 underline decoration-4 underline-offset-4 decoration-blue-100">
+                  年度別・歴代年俸データセンター
+                </h2>
+              </div>
+            </div>
+            <div className="text-slate-400 transition-transform duration-300 group-open:rotate-180">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </div>
+          </summary>
+          <div className="px-5 md:px-16 pb-6 pt-4 bg-slate-50 border-t border-slate-100">
+            <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase mb-4">切り口を選択してランキング表示</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+              <Link href="/salaries?year=2026" className="bg-white border border-slate-200 p-4 rounded-xl shadow-sm text-center font-black text-xs hover:border-blue-500 hover:bg-blue-50 transition-all text-slate-700">
+                💸 2026年度 全体ランキング
+              </Link>
+              <Link href="/salaries?year=2026&league=central" className="bg-white border border-slate-200 p-4 rounded-xl shadow-sm text-center font-black text-xs hover:border-blue-500 hover:bg-blue-50 transition-all text-slate-700">
+                🔴 セ・リーグ 年俸順
+              </Link>
+              <Link href="/salaries?year=2026&league=pacific" className="bg-white border border-slate-200 p-4 rounded-xl shadow-sm text-center font-black text-xs hover:border-blue-500 hover:bg-blue-50 transition-all text-slate-700">
+                🔵 パ・リーグ 年俸順
+              </Link>
+              <Link href="/salaries?year=all" className="bg-white border border-slate-200 p-4 rounded-xl shadow-sm text-center font-black text-xs hover:border-blue-500 hover:bg-blue-50 transition-all text-slate-700">
+                👑 NPB歴代最高年俸ランキング
+              </Link>
+            </div>
+          </div>
+        </details>
+      </div>
+
     </div>
   );
 }
