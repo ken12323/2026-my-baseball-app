@@ -86,7 +86,7 @@ function SalariesRankingContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  // URLパラメータからの状態復元（デフォルト値スタック制御）
+  // URLパラメータからの状態復元
   const yearParam = searchParams.get('year') || '2026';
   const leagueParam = searchParams.get('league') || 'all';
   const teamParam = searchParams.get('team') || 'all';
@@ -104,12 +104,10 @@ function SalariesRankingContent() {
     } else {
       params.set(key, value);
     }
-    // 球団を選択した際は、整合性を保つため自動的に対象リーグに合わせる
     if (key === 'team' && value !== 'all') {
       const target = ALL_TEAMS_LIST.find(t => value.includes(t.name) || t.name.includes(value));
       if (target) params.set('league', target.league);
     }
-    // リーグを切り替えた際は球団をリセット
     if (key === 'league') {
       params.delete('team');
     }
@@ -152,42 +150,48 @@ function SalariesRankingContent() {
         processMaster(resP1.data || []);
         processMaster(resP2.data || []);
 
-        // ② 対象年度の年俸ベースデータを取得
+        // ② 対象スコープの年俸ベースデータを一括取得
         let salaryQuery = supabase.from('player_salaries').select('*');
         if (yearParam !== 'all') {
           salaryQuery = salaryQuery.eq('year', Number(yearParam));
         }
         const { data: salaryData } = await salaryQuery;
 
-        // ③ 対象年度のスタッツデータを一括回収して結合準備
+        // 💡【進化事実】：取得した年俸データから、必要な選手IDと「それぞれの年俸の年度」を動的に抽出
+        const salaryRecords = salaryData || [];
+        const targetPlayerIds = Array.from(new Set(salaryRecords.map(s => String(s.player_id).padStart(8, '0'))));
+        const targetYears = Array.from(new Set(salaryRecords.map(s => Number(s.year))));
+
+        // ③ 歴代や過去年度を横断して、該当する選手・年度のスタッツだけをピンポイントで動的にインクエリ回収！(N+1爆発を完全に防ぐ神設計)
         let bData: any[] = [];
         let pData: any[] = [];
 
-        if (yearParam !== 'all') {
-          const targetYear = Number(yearParam);
+        if (targetPlayerIds.length > 0 && targetYears.length > 0) {
           const [b1, b2, p1, p2] = await Promise.all([
-            supabase.from('batting_stats').select('*').eq('年度', targetYear),
-            supabase.from('farm_batting_stats').select('*').eq('年度', targetYear),
-            supabase.from('pitching_stats').select('*').eq('年度', targetYear),
-            supabase.from('farm_pitching_stats').select('*').eq('年度', targetYear)
+            supabase.from('batting_stats').select('*').in('player_id', targetPlayerIds).in('年度', targetYears),
+            supabase.from('farm_batting_stats').select('*').in('player_id', targetPlayerIds).in('年度', targetYears),
+            supabase.from('pitching_stats').select('*').in('player_id', targetPlayerIds).in('年度', targetYears),
+            supabase.from('farm_pitching_stats').select('*').in('player_id', targetPlayerIds).in('年度', targetYears)
           ]);
           bData = [...(b1.data || []), ...(b2.data || [])];
           pData = [...(p1.data || []), ...(p2.data || [])];
         }
 
+        // 💡 マージ用のキーを「ID_年度」の一意のハイブリッドキーにしてMapを構築
         const bMap = new Map();
         const pMap = new Map();
-        bData.forEach(row => bMap.set(String(row.player_id).padStart(8, '0'), row));
-        pData.forEach(row => pMap.set(String(row.player_id).padStart(8, '0'), row));
+        bData.forEach(row => bMap.set(`${String(row.player_id).padStart(8, '0')}_${row.年度}`, row));
+        pData.forEach(row => pMap.set(`${String(row.player_id).padStart(8, '0')}_${row.年度}`, row));
 
-        // ④ 超高精度名寄せ＆多重JOIN結合処理
+        // ④ 超高精度名寄せ＆多重動的スコープJOIN結合処理
         const mergedList: any[] = [];
         let sumSalary = 0;
 
-        (salaryData || []).forEach(sal => {
+        salaryRecords.forEach(sal => {
           const sId = String(sal.player_id).padStart(8, '0');
           const nId = Number(sal.player_id);
           const cName = cleanNameKey(sal.player_name);
+          const sYear = Number(sal.year);
 
           // 3段階フォールバックによるマスター情報の紐付け
           let matchMeta = masterMap.get(sId) || masterMap.get(String(nId)) || masterMap.get(cName);
@@ -206,8 +210,12 @@ function SalariesRankingContent() {
             }
           }
 
-          // 投手・野手の役割判定の事実化
-          const isPitcherRole = finalPos.includes('投手') || pMap.has(finalId);
+          // 「ID_年度」のコンボキーで、その選手がその年俸を貰っていた「その年」の成績を全自動ハント！
+          const lookupKey = `${finalId}_${sYear}`;
+          const statB = bMap.get(lookupKey);
+          const statP = pMap.get(lookupKey);
+
+          const isPitcherRole = finalPos.includes('投手') || pMap.has(lookupKey) || (statP !== undefined);
           const currentRole: 'hitter' | 'pitcher' = isPitcherRole ? 'pitcher' : 'hitter';
 
           // 📂 URLパラメータに基づく厳格なフィルタリング
@@ -217,10 +225,6 @@ function SalariesRankingContent() {
             const cleanT = teamParam.replace(/タイガース|ジャイアンツ|ベイスターズ|ドラゴンズ|スワローズ|カープ|ゴールデンイーグルス|マリーンズ|ファイターズ|ライオンズ|バファローズ|ホークス/g, '');
             if (!finalTeam.includes(cleanT) && !cleanT.includes(finalTeam)) return;
           }
-
-          // その年度のスタッツデータをマージ
-          const statB = bMap.get(finalId);
-          const statP = pMap.get(finalId);
 
           sumSalary += Number(sal.salary || 0);
 
@@ -262,7 +266,7 @@ function SalariesRankingContent() {
     <div className="space-y-6">
       
       {/* 🧭 Aコントロール：フィルターナビゲーション */}
-      <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 space-y-4">
+      <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 space-y-4 text-black">
         {/* 年度・歴代切り替え */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-50 pb-3">
           <span className="text-xs font-black text-slate-400 uppercase tracking-wider">📅 対象シーズンスコープ</span>
@@ -276,7 +280,7 @@ function SalariesRankingContent() {
             <select
               value={yearParam === 'all' || yearParam === '2026' ? '2026' : yearParam}
               onChange={(e) => updateParams('year', e.target.value)}
-              className={`px-2 py-1 rounded-lg text-xs font-black border bg-slate-50 text-slate-600 ${yearParam !== 'all' && yearParam !== '2026' ? 'border-blue-500 bg-blue-50 text-blue-600' : 'border-slate-200'}`}
+              className={`px-2 py-1 rounded-lg text-xs font-black border bg-slate-50 text-slate-600 focus:outline-none ${yearParam !== 'all' && yearParam !== '2026' ? 'border-blue-500 bg-blue-50 text-blue-600' : 'border-slate-200'}`}
             >
               {YEARS_ARRAY.filter(y => y !== 2026).map(y => (
                 <option key={y} value={String(y)}>{y}年</option>
@@ -306,7 +310,7 @@ function SalariesRankingContent() {
             <div className="flex bg-slate-100 p-1 rounded-xl gap-1">
               <button onClick={() => updateParams('role', 'all')} className={`flex-1 py-1.5 rounded-lg font-black text-xs transition-all ${roleParam === 'all' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'}`}>全ポジション</button>
               <button onClick={() => updateParams('role', 'hitter')} className={`flex-1 py-1.5 rounded-lg font-black text-xs transition-all ${roleParam === 'hitter' ? 'bg-orange-500 text-white shadow-sm' : 'text-slate-400'}`}>🏏 野手限定</button>
-              <button onClick={() => updateParams('role', 'pitcher')} className={`flex-1 py-1.5 rounded-lg font-black text-xs transition-all ${roleParam === 'pitcher' ? 'bg-blue-900 text-white shadow-sm' : 'text-slate-400'}`}>👑 投手限定</button>
+              <button onClick={() => updateParams('role', 'pitcher')} className={`flex-1 py-1.5 rounded-lg font-black text-xs transition-all ${roleParam === 'pitcher' ? 'bg-blue-900 text-white shadow-sm' : 'text-slate-400'}`}>⚾️ 投手限定</button>
             </div>
           </div>
         </div>
@@ -330,7 +334,7 @@ function SalariesRankingContent() {
       </div>
 
       {/* 📊 Bサマリー：スコープサマリーカード */}
-      <div className="grid grid-cols-3 gap-3 text-center">
+      <div className="grid grid-cols-3 gap-3 text-center text-black">
         <div className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
           <span className="text-[9px] font-black text-slate-400 block mb-0.5 uppercase">該当者数</span>
           <p className="text-xl font-black text-slate-800 tracking-tight">{summaryStats.count}<span className="text-xs font-bold text-slate-400 ml-0.5">名</span></p>
@@ -353,11 +357,9 @@ function SalariesRankingContent() {
           条件に合致する年俸データが見つかりません。
         </div>
       ) : (
-        <div className="space-y-2.5">
+        <div className="space-y-2.5 text-black">
           {rankingData.map((row, index) => {
             const isTop3 = index < 3;
-            
-            // パワフルなメタリックランクバッジ演出
             const rankBadgeClass = isTop3
               ? index === 0 ? "bg-gradient-to-b from-yellow-300 to-amber-500 text-yellow-900 font-black shadow-md scale-105"
                 : index === 1 ? "bg-gradient-to-b from-slate-300 to-slate-400 text-slate-800 font-black"
@@ -379,7 +381,7 @@ function SalariesRankingContent() {
                     {/* 選手基本メタ */}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        {/* 💡選手名に個人詳細ページへの型安全な動線を結合 */}
+                        {/* 💡選手名に個人詳細ページへの型安全なリンクを結合 */}
                         <Link 
                           href={`/player/${row.resolvedId}`}
                           className="text-base font-black text-slate-800 hover:text-blue-600 hover:underline tracking-tight block truncate shrink-0"
@@ -387,11 +389,10 @@ function SalariesRankingContent() {
                         >
                           {row.resolvedName}
                         </Link>
-                        {yearParam === 'all' && (
-                          <span className="text-[9px] font-black bg-slate-900 text-amber-400 px-1.5 py-0.5 rounded italic shadow-sm">
-                            {row.year}年
-                          </span>
-                        )}
+                        {/* 歴代ランキングの時、または別年度選択時は、その年俸を記録した「該当年度」のインジケータを美しくバッジ表示 */}
+                        <span className="text-[9px] font-black bg-slate-900 text-amber-400 px-1.5 py-0.5 rounded italic shadow-sm">
+                          {row.year}年
+                        </span>
                       </div>
                       <div className="flex items-center gap-2 text-[10px] text-slate-400 font-bold mt-0.5">
                         <span className="bg-slate-50 px-1.5 py-0.5 rounded border text-slate-500">{row.resolvedTeam}</span>
@@ -412,7 +413,7 @@ function SalariesRankingContent() {
                   </div>
                 </summary>
 
-                {/* 📂 アコーディオン展開時の「ミニスタッツ」結合表示ブロック */}
+                {/* 📂 アコーディオン展開時の「ミニスタッツ」結合表示ブロック (過去年度・歴代追跡完全対応版) */}
                 <div className="px-4 pb-4 pt-3 bg-slate-50 border-t border-slate-100 text-xs font-sans">
                   {row.role === 'hitter' ? (
                     // 野手用ミニスタッツ
@@ -425,13 +426,12 @@ function SalariesRankingContent() {
                           <div className="bg-white p-1.5 rounded-lg border shadow-inner"><div className="text-[9px] font-bold text-slate-400">安打</div><div className="font-black text-slate-700 text-xs">{row.statB.安打 || 0}</div></div>
                           <div className="bg-white p-1.5 rounded-lg border shadow-inner"><div className="text-[9px] font-bold text-slate-400">本塁打</div><div className="font-black text-red-600 text-xs">{row.statB.本塁打 || 0}</div></div>
                           <div className="bg-white p-1.5 rounded-lg border shadow-inner"><div className="text-[9px] font-bold text-slate-400">OPS</div><div className="font-black text-slate-700 text-xs">{dotFormat(row.statB.OPS)}</div></div>
-                          {/* 💡【バグ修正箇所】：ブラウザクラッシュを誘発していたドット記法をブラケット記法に修正し100%完全解決 */}
                           <div className="bg-white p-1.5 rounded-lg border border-orange-100 shadow-sm"><div className="text-[9px] font-black text-orange-400">wRC+</div><div className="font-black text-orange-600 text-xs">{row.statB['wRC+'] || 0}</div></div>
                           <div className="bg-white p-1.5 rounded-lg border border-blue-100 shadow-sm col-span-4 sm:col-span-1"><div className="text-[9px] font-black text-blue-400">野手WAR</div><div className="font-black text-blue-600 text-xs">{toF(row.statB.野手WAR).toFixed(1)}</div></div>
                         </div>
                       </div>
                     ) : (
-                      <p className="text-slate-400 font-bold italic text-[11px] text-center py-2">⚠️ 当年度の1軍/2軍打撃公式成績データがありません</p>
+                      <p className="text-slate-400 font-bold italic text-[11px] text-center py-2">⚠️ {row.year}年度の公式打撃成績スタッツが登録されていません</p>
                     )
                   ) : (
                     // 投手用ミニスタッツ
@@ -450,7 +450,7 @@ function SalariesRankingContent() {
                         </div>
                       </div>
                     ) : (
-                      <p className="text-slate-400 font-bold italic text-[11px] text-center py-2">⚠️ 当年度の1軍/2軍投手公式成績データがありません</p>
+                      <p className="text-slate-400 font-bold italic text-[11px] text-center py-2">⚠️ {row.year}年度の公式投手成績スタッツが登録されていません</p>
                     )
                   )}
 
@@ -460,7 +460,7 @@ function SalariesRankingContent() {
                       href={`/player/${row.resolvedId}`}
                       className="text-[10px] font-black text-blue-600 bg-white border border-blue-200 px-3 py-1.5 rounded-xl shadow-sm hover:bg-blue-50 transition-all flex items-center gap-1"
                     >
-                      👤 {row.resolvedName} の高度セイバー指標・年俸チャートを詳しく見る →
+                      👤 {row.resolvedName} の全年度年俸推移チャート・高度指標を詳しく見る →
                     </Link>
                   </div>
                 </div>
