@@ -129,21 +129,6 @@ export default function PlayerDetail() {
   
   // タイムラインデータを管理するステート
   const [salaryHistory, setSalaryHistory] = useState<any[]>([]);
-  
-  // デバッグボード用ステート
-  const [debugLog, setDebugLog] = useState<{
-    stringId: string;
-    numericId: number;
-    errorMsg: string | null;
-    searchRoute: string;
-    foundPlayerIdInDB: string;
-  }>({
-    stringId: String(id).padStart(8, '0'),
-    numericId: Number(id),
-    errorMsg: null,
-    searchRoute: '未開始',
-    foundPlayerIdInDB: 'データ未検出'
-  });
 
   const dotFormat = (val: any) => {
     const s = toF(val).toFixed(3);
@@ -240,6 +225,7 @@ export default function PlayerDetail() {
 
         const nameNoSpace = pData.player_name.replace(/\s+/g, '').split('').join('%');
         
+        // 成績データを並行ロード
         const [allP1, allB1, allP2, allB2] = await Promise.all([
           supabase.from('pitching_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`),
           supabase.from('batting_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`),
@@ -247,44 +233,33 @@ export default function PlayerDetail() {
           supabase.from('farm_batting_stats').select('*').or(`player_id.eq.${safeId},名前.ilike.%${nameNoSpace}%`)
         ]);
 
+        // 3段階ディープ・フォールバック検索（実績稼働中の最強データハントロジック）
         let finalSalaries: any[] = [];
-        let errorTrack: string | null = null;
-        let routeTrack = '未検出';
-        let idInDBTrack = 'データ未検出';
 
-        // 【ルート①】：8桁0埋め文字列型で安全に単独アタック
+        // 【ルート①】：8桁0埋め文字列型IDでロード
         const resStr = await supabase.from('player_salaries')
           .select('player_id, year, salary, team_name')
           .eq('player_id', safeId)
           .order('year', { ascending: true });
 
-        if (resStr.error) errorTrack = `ルート1エラー: ${resStr.error.message}`;
-
         if (resStr.data && resStr.data.length > 0) {
           finalSalaries = resStr.data;
-          routeTrack = 'ルート① (8桁文字列型IDマッチ成功)';
-          idInDBTrack = String(resStr.data[0].player_id);
         } else {
-          // 【ルート②】：数値型IDに切り替えて独立単独アタック（PostgreSQL型エラーの完全回避）
+          // 【ルート②】：数値型IDに切り替えてロード（PostgreSQL型クラッシュの完全回避）
           if (!isNaN(numId)) {
             const resNum = await supabase.from('player_salaries')
               .select('player_id, year, salary, team_name')
               .eq('player_id', numId)
               .order('year', { ascending: true });
 
-            if (resNum.error) errorTrack = (errorTrack ? errorTrack + ' / ' : '') + `ルート2エラー: ${resNum.error.message}`;
-
             if (resNum.data && resNum.data.length > 0) {
               finalSalaries = resNum.data;
-              routeTrack = 'ルート② (生数値型IDマッチ成功)';
-              idInDBTrack = String(resNum.data[0].player_id);
             }
           }
         }
 
-        // 【ルート③】：ID全滅時の名前ダイレクトハント（スペース中和完全強化版）
+        // 【ルート③】：ID全滅時の姓名スペース中和ダイレクト名前ハント
         if (finalSalaries.length === 0 && pData.player_name) {
-          // 💡【最重要パッチ】：マスタ側の姓名間の空白を完全に消去し、純粋な一連の漢字パターン（森%下%暢%仁）を生成
           const strictCleanName = pData.player_name.replace(/[\s ]+/g, '');
           const strictNamePattern = strictCleanName.split('').join('%');
 
@@ -293,25 +268,12 @@ export default function PlayerDetail() {
             .or(`player_name.ilike.%${strictCleanName}%,player_name.ilike.%${strictNamePattern}%`)
             .order('year', { ascending: true });
 
-          if (resName.error) errorTrack = (errorTrack ? errorTrack + ' / ' : '') + `ルート3エラー: ${resName.error.message}`;
-
           if (resName.data && resName.data.length > 0) {
             finalSalaries = resName.data;
-            routeTrack = `ルート③ (姓名スペース中和ハント成功 / グラゼニ名: ${resName.data[0].player_name})`;
-            idInDBTrack = resName.data[0].player_id === null ? 'NULL (未適合・隔離退避状態)' : String(resName.data[0].player_id);
-          } else {
-            routeTrack = '全ルートで検出失敗 (グラゼニ側に該当選手なし、または別名登録の可能性)';
           }
         }
 
-        setDebugLog({
-          stringId: safeId,
-          numericId: numId,
-          errorMsg: errorTrack,
-          searchRoute: routeTrack,
-          foundPlayerIdInDB: idInDBTrack
-        });
-
+        // 最終データをグラフ用ステートへ格納
         setSalaryHistory(finalSalaries);
 
         const statsMap = new Map();
@@ -641,7 +603,7 @@ export default function PlayerDetail() {
   return (
     <main className="min-h-screen bg-gray-50 p-2 md:p-10 text-slate-900 font-sans tracking-tight" onClick={() => setActiveTooltip(null)}>
       <div className="max-w-2xl mx-auto">
-        <Link href="/" className="text-blue-600 font-black mb-4 inline-block px-2">← メニューへ戻る</Link>
+        <Link href="/" className="text-blue-600 font-black mb-4 inline-block px-2">← メメニューへ戻る</Link>
         
         <header className="bg-white rounded-[2.5rem] overflow-hidden shadow-2xl border-[6px] border-blue-600 mb-8 p-6 md:p-8 text-black">
           <div className="flex justify-between items-start gap-4 mb-8">
@@ -669,7 +631,7 @@ export default function PlayerDetail() {
           </div>
           <div className="grid grid-cols-2 gap-4 mt-4 text-center">
             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-              <span className="text-[10px] font-black text-slate-400 block mb-2 uppercase">{isPitcher ? 'FIP' : 'wRC+'} <HelpIcon id="h1" text={isPitcher ? "被本塁打・与四死球・奪三振のみで評価した、運に左右されない防御率" : "球場や時代背景を補正し、打者が平均の何倍の得点を生み出したかを示す傑出度。"} benchmark={isPitcher ? "3.50で優秀な先発、2.00台でエース。" : "100が平均、120で優秀、140以上はMVP級の活躍。"}/></span>
+              <span className="text-[10px] font-black text-slate-400 block mb-2 uppercase">{isPitcher ? 'FIP' : 'wRC+'} <HelpIcon id="h1" text={isPitcher ? "被本塁打・与四死球・奪三振のみで評価した、運に左右されない防御率" : "球場や時代背景を補正し、打者が平均の何倍の得点を生み出したかを示す傑出度。"} benchmark={isPitcher ? "3.50で優秀な先発、2.00台でエース。" : "100が平均, 120で優秀、140以上はMVP級の活躍。"}/></span>
               <div className={rankBadge(isPitcher ? getRank(toF(pSaber.fipVal), 'FIP') : getRank(toF(bSaber.wrcPlusVal), 'wRC+'))}>RANK</div>
               <p className="text-slate-900 text-3xl font-black mt-2">{isPitcher ? pSaber.fip : bSaber.wrcPlus}</p>
             </div>
@@ -744,23 +706,8 @@ export default function PlayerDetail() {
           </div>
         </div>
 
-        {/* 🛠️ インライン結合ボード＆グラフエリア（スペース中和完全強化版） */}
+        {/* 💴 リリース仕様：デバッグボードを取り除いた、純粋で美しい年俸推移グラフエリア */}
         <div className="bg-white rounded-[2rem] p-4 sm:p-6 shadow-sm border border-slate-100 mb-8 space-y-4 text-black">
-          
-          {/* 🔍 超強化型・データベース直結診断ボード */}
-          <div className="bg-slate-900 text-emerald-400 p-3 rounded-xl text-[11px] font-mono leading-relaxed shadow-inner">
-            <p className="font-bold text-white mb-1">🔍 データベース直結診断ボード</p>
-            <p>・検出ルート: <span className="text-yellow-300 font-bold">{debugLog.searchRoute}</span></p>
-            <p>・DBに格納されているplayer_idの実態: <span className="text-orange-400 font-bold">{debugLog.foundPlayerIdInDB}</span></p>
-            <p>・取得レコード総数: <span className="text-yellow-300 font-bold">{salaryHistory?.length ?? 0} 件</span></p>
-            <p>・型検証 [文字列版]: <span className="text-blue-300">{debugLog.stringId}</span> / [数値版]: <span className="text-blue-300">{debugLog.numericId}</span></p>
-            {debugLog.errorMsg && <p className="text-rose-400 font-bold">⚠️ 例外ログ: {debugLog.errorMsg}</p>}
-            <p className="text-slate-400 mt-1">・届いている生データ(JSON):</p>
-            <pre className="text-slate-300 bg-black/40 p-2 rounded mt-1 overflow-x-auto max-h-24 scrollbar-none">
-              {JSON.stringify(salaryHistory, null, 2)}
-            </pre>
-          </div>
-
           <div className="flex items-center justify-between border-b border-slate-50 pb-2">
             <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
               <span>💴</span> 年俸推移ヒストリー
