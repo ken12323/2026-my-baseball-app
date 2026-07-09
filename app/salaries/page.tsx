@@ -143,32 +143,28 @@ function SalariesRankingContent() {
           supabase.from('farm_players').select('player_id, player_name, position_detail, team_name')
         ]);
 
+        const masterList = [...(resP1.data || []), ...(resP2.data || [])];
         const masterMap = new Map();
         const cleanNameKey = (name: string) => (name || '').replace(/[\s ]+/g, '');
 
-        const processMaster = (list: any[]) => {
-          (list || []).forEach(p => {
-            const sId = String(p.player_id).padStart(8, '0');
-            const nId = Number(p.player_id);
-            const cName = cleanNameKey(p.player_name);
+        masterList.forEach(p => {
+          const sId = String(p.player_id).padStart(8, '0');
+          const nId = Number(p.player_id);
+          const cName = cleanNameKey(p.player_name);
 
-            const meta = {
-              player_id: sId,
-              player_name: p.player_name,
-              position_detail: p.position_detail || '不明',
-              team_name: p.team_name || '不明'
-            };
+          const meta = {
+            player_id: sId,
+            player_name: p.player_name,
+            position_detail: p.position_detail || '不明',
+            team_name: p.team_name || '不明'
+          };
 
-            masterMap.set(sId, meta);
-            masterMap.set(String(nId), meta);
-            if (cName) masterMap.set(cName, meta);
-          });
-        };
+          masterMap.set(sId, meta);
+          masterMap.set(String(nId), meta);
+          if (cName) masterMap.set(cName, meta);
+        });
 
-        processMaster(resP1.data || []);
-        processMaster(resP2.data || []);
-
-        // ② 年俸ベースデータの取得（金額順トップ1000制限ハント）
+        // ② 年俸ベースデータの取得
         let salaryQuery = supabase.from('player_salaries')
           .select('*')
           .order('salary', { ascending: false })
@@ -213,7 +209,35 @@ function SalariesRankingContent() {
           const cName = cleanNameKey(sal.player_name);
           const sYear = Number(sal.year);
 
+          // 3段階フォールバックによるマスター情報の紐付け
           let matchMeta = masterMap.get(sId) || masterMap.get(String(nId)) || masterMap.get(cName);
+
+          // 💡【最重要パッチ事実】：外国人特有の「登録名切り取り」による名寄せの壁を100%粉砕するクロスエンジン！
+          if (!matchMeta && sal.player_name) {
+            const rawSalName = sal.player_name.trim();
+            const rawSalTeam = sal.team_name || '';
+
+            const foundPlayer = masterList.find(p => {
+              const cleanMName = p.player_name.replace(/[\s ]+/g, '');
+              // 部分一致ジャッジ（例：「オスナ」が「ロベルト・オスナ」や「ホセ・オスナ」に含まれるか）
+              const nameMatch = cleanMName.includes(rawSalName) || rawSalName.includes(cleanMName);
+              if (!nameMatch) return false;
+
+              // 同姓同名の衝突（ソフトバンクの投手オスナ vs ヤクルトの野手オスナ等）を球団名の前方一致で完全に篩い分ける
+              const pTeamCut = p.team_name.substring(0, 2);
+              const salTeamCut = rawSalTeam.substring(0, 2);
+              return rawSalTeam.includes(pTeamCut) || p.team_name.includes(salTeamCut);
+            });
+
+            if (foundPlayer) {
+              matchMeta = {
+                player_id: String(foundPlayer.player_id).padStart(8, '0'),
+                player_name: foundPlayer.player_name,
+                position_detail: foundPlayer.position_detail || '不明',
+                team_name: foundPlayer.team_name || '不明'
+              };
+            }
+          }
 
           const finalName = matchMeta ? matchMeta.player_name : sal.player_name;
           const finalId = matchMeta ? matchMeta.player_id : sId;
@@ -258,6 +282,7 @@ function SalariesRankingContent() {
           });
         });
 
+        // 最終ソートとステート格納
         const sortedList = mergedList.sort((a, b) => Number(b.salary || 0) - Number(a.salary || 0));
         setRankingData(sortedList);
 
@@ -325,7 +350,7 @@ function SalariesRankingContent() {
             <div className="flex bg-slate-100 p-1 rounded-xl gap-1">
               <button onClick={() => updateParams('role', 'all')} className={`flex-1 py-1.5 rounded-lg font-black text-xs transition-all ${roleParam === 'all' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'}`}>全ポジション</button>
               <button onClick={() => updateParams('role', 'hitter')} className={`flex-1 py-1.5 rounded-lg font-black text-xs transition-all ${roleParam === 'hitter' ? 'bg-orange-500 text-white shadow-sm' : 'text-slate-400'}`}>🏏 野手限定</button>
-              <button onClick={() => updateParams('role', 'pitcher')} className={`flex-1 py-1.5 rounded-lg font-black text-xs transition-all ${roleParam === 'pitcher' ? 'bg-blue-900 text-white shadow-sm' : 'text-slate-400'}`}>⚾️ 投手限定</button>
+              <button onClick={() => updateParams('role', 'pitcher')} className={`flex-1 py-1.5 rounded-lg font-black text-xs transition-all ${roleParam === 'pitcher' ? 'bg-blue-900 text-white shadow-sm' : 'text-slate-400'}`}>👑 投手限定</button>
             </div>
           </div>
         </div>
@@ -498,7 +523,6 @@ export default function PlayerSalariesRanking() {
           ← メニュートップへ戻る
         </Link>
 
-        {/* 💴 変更：外部サイト名「グラゼニ」のクレジットを完全排除し、本番リリース仕様に美しく刷新！ */}
         <div className="bg-gradient-to-br from-blue-800 to-slate-900 text-white p-6 rounded-3xl shadow-xl border-b-8 border-blue-600 relative overflow-hidden">
           <div className="absolute top-0 right-0 opacity-10 text-9xl font-black -mt-6 -mr-6 select-none italic">
             SALARY
