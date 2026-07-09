@@ -36,7 +36,7 @@ const ALL_TEAMS_LIST = [
 
 const YEARS_ARRAY = Array.from({ length: 2026 - 2013 + 1 }, (_, i) => 2026 - i);
 
-// 💡【デザイン強化】：球団一瞬判別！球団の公式イメージカラー対応バッジ
+// 球団の公式イメージカラー対応バッジ背景定義
 const getTeamColorClass = (teamName: string): string => {
   const clean = teamName || '';
   if (clean.includes('巨人') || clean.includes('読売') || clean.includes('ジャイアンツ')) return 'bg-orange-500 text-white border-orange-600';
@@ -115,7 +115,6 @@ function SalariesRankingContent() {
   const [loading, setLoading] = useState(true);
   const [summaryStats, setSummaryStats] = useState({ total: 0, avg: 0, count: 0 });
 
-  // 💡【バグ修正事実】：yearの'all'を削除させず、URLパラメータとして確実に固定する防弾処理
   const updateParams = (key: string, value: string) => {
     const params = new URLSearchParams(searchParams.toString());
     if (value === 'all' && key !== 'year') {
@@ -169,7 +168,7 @@ function SalariesRankingContent() {
         processMaster(resP1.data || []);
         processMaster(resP2.data || []);
 
-        // ② 年俸ベースデータの取得（サーバー制限1000件を考慮し、あらかじめ金額の大きい順トップ1000をDB側でソートして確実にハント）
+        // ② 年俸ベースデータの取得（金額順トップ1000制限ハント）
         let salaryQuery = supabase.from('player_salaries')
           .select('*')
           .order('salary', { ascending: false })
@@ -259,7 +258,6 @@ function SalariesRankingContent() {
           });
         });
 
-        // 最終ソートとステート格納
         const sortedList = mergedList.sort((a, b) => Number(b.salary || 0) - Number(a.salary || 0));
         setRankingData(sortedList);
 
@@ -334,7 +332,7 @@ function SalariesRankingContent() {
 
         {/* 12球団ピンポイントセレクト */}
         <div className="flex items-center gap-3">
-          <span className="text Explo-[11px] font-black text-slate-400 shrink-0 uppercase">球団絞り込み:</span>
+          <span className="text-[11px] font-black text-slate-400 shrink-0 uppercase">球団絞り込み:</span>
           <select
             value={teamParam}
             onChange={(e) => updateParams('team', e.target.value)}
@@ -405,13 +403,12 @@ function SalariesRankingContent() {
                         >
                           {row.resolvedName}
                         </Link>
-                        {/* 💡【デザイン修正】：黒オレンジバッジの強調を排除し、美しく馴染むプレーンな年度テキストへ変更！ */}
                         <span className="text-[11px] font-bold text-slate-400 ml-1">
                           ({row.year}年)
                         </span>
                       </div>
                       <div className="flex items-center gap-2 text-[10px] font-bold mt-1">
-                        {/* 💡【デザイン強化】：12球団公式イメージカラーをバッジ背景に完全注入！一目で判別可能に！ */}
+                        {/* 12球団公式イメージカラー動的インジェクションバッジ */}
                         <span className={`px-2 py-0.5 rounded border text-[9px] font-black tracking-tight shadow-inner ${getTeamColorClass(row.resolvedTeam)}`}>
                           {row.resolvedTeam}
                         </span>
@@ -501,6 +498,7 @@ export default function PlayerSalariesRanking() {
           ← メニュートップへ戻る
         </Link>
 
+        {/* 💴 変更：外部サイト名「グラゼニ」のクレジットを完全排除し、本番リリース仕様に美しく刷新！ */}
         <div className="bg-gradient-to-br from-blue-800 to-slate-900 text-white p-6 rounded-3xl shadow-xl border-b-8 border-blue-600 relative overflow-hidden">
           <div className="absolute top-0 right-0 opacity-10 text-9xl font-black -mt-6 -mr-6 select-none italic">
             SALARY
@@ -510,7 +508,7 @@ export default function PlayerSalariesRanking() {
               <span>💴</span> NPB年俸データセンター
             </h1>
             <p className="text-[11px] sm:text-xs text-slate-300 font-bold mt-1 max-w-xl leading-relaxed">
-              グラゼニから名寄せ回収した全登録データ。年度別・球団別・歴代最高額など、あらゆる角度からプロ野球の市場価値をランキング化。
+              独自に収集・名寄せ統合した全登録データ。年度別・球団別・歴代最高額など、あらゆる角度からプロ野球の市場価値をランキング化。
             </p>
           </div>
         </div>
