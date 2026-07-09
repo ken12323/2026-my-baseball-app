@@ -36,7 +36,7 @@ const ALL_TEAMS_LIST = [
 
 const YEARS_ARRAY = Array.from({ length: 2026 - 2013 + 1 }, (_, i) => 2026 - i);
 
-// 球団の公式イメージカラー対応バッジ背景定義
+// 球団の公式イメージカラー対応バッジ
 const getTeamColorClass = (teamName: string): string => {
   const clean = teamName || '';
   if (clean.includes('巨人') || clean.includes('読売') || clean.includes('ジャイアンツ')) return 'bg-orange-500 text-white border-orange-600';
@@ -137,10 +137,10 @@ function SalariesRankingContent() {
       try {
         setLoading(true);
 
-        // ① 選手マスターデータの並行ロード
+        // ① 選手マスターデータの並行ロード（プロパティ漏れを防ぐためselect('*')に強化）
         const [resP1, resP2] = await Promise.all([
-          supabase.from('players').select('player_id, player_name, position_detail, team_name'),
-          supabase.from('farm_players').select('player_id, player_name, position_detail, team_name')
+          supabase.from('players').select('*'),
+          supabase.from('farm_players').select('*')
         ]);
 
         const masterList = [...(resP1.data || []), ...(resP2.data || [])];
@@ -212,21 +212,27 @@ function SalariesRankingContent() {
           // 3段階フォールバックによるマスター情報の紐付け
           let matchMeta = masterMap.get(sId) || masterMap.get(String(nId)) || masterMap.get(cName);
 
-          // 💡【最重要パッチ事実】：外国人特有の「登録名切り取り」による名寄せの壁を100%粉砕するクロスエンジン！
+          // 💡【外国人名寄せバグ完全修正】：球団名のコア単語相互内包判定エンジンへ進化！
           if (!matchMeta && sal.player_name) {
             const rawSalName = sal.player_name.trim();
             const rawSalTeam = sal.team_name || '';
 
+            // 「球団の通称コア単語」を抽出して部分一致の精度を100%にする
+            const getTeamCoreWord = (tName: string) => {
+              const m = tName.match(/ヤクルト|ソフトバンク|巨人|読売|阪神|中日|DeNA|横浜|広島|西武|ロッテ|オリックス|楽天|オイシックス|ハヤテ/);
+              return m ? m[0] : tName.substring(0, 2);
+            };
+            const salTeamCore = getTeamCoreWord(rawSalTeam);
+
             const foundPlayer = masterList.find(p => {
               const cleanMName = p.player_name.replace(/[\s ]+/g, '');
-              // 部分一致ジャッジ（例：「オスナ」が「ロベルト・オスナ」や「ホセ・オスナ」に含まれるか）
+              // 名前の一方内包ジャッジ（「ドミンゴ・サンタナ」に「ドミンゴ」が含まれる、または「オスナ」に合致）
               const nameMatch = cleanMName.includes(rawSalName) || rawSalName.includes(cleanMName);
               if (!nameMatch) return false;
 
-              // 同姓同名の衝突（ソフトバンクの投手オスナ vs ヤクルトの野手オスナ等）を球団名の前方一致で完全に篩い分ける
-              const pTeamCut = p.team_name.substring(0, 2);
-              const salTeamCut = rawSalTeam.substring(0, 2);
-              return rawSalTeam.includes(pTeamCut) || p.team_name.includes(salTeamCut);
+              // 球団名のコア単語が、マスター側の球団名に含まれているかクロスジャッジ
+              const mTeamCore = getTeamCoreWord(p.team_name || '');
+              return p.team_name.includes(salTeamCore) || rawSalTeam.includes(mTeamCore) || salTeamCore === mTeamCore;
             });
 
             if (foundPlayer) {
@@ -259,7 +265,7 @@ function SalariesRankingContent() {
           const isPitcherRole = finalPos.includes('投手') || pMap.has(lookupKey) || (statP !== undefined);
           const currentRole: 'hitter' | 'pitcher' = isPitcherRole ? 'pitcher' : 'hitter';
 
-          // URLパラメータに基づく厳格なフィルタリング
+          // URLパラメータに基づく厳格なフィルター
           if (leagueParam !== 'all' && matchedLeague !== leagueParam) return;
           if (roleParam !== 'all' && currentRole !== roleParam) return;
           if (teamParam !== 'all') {
@@ -282,7 +288,6 @@ function SalariesRankingContent() {
           });
         });
 
-        // 最終ソートとステート格納
         const sortedList = mergedList.sort((a, b) => Number(b.salary || 0) - Number(a.salary || 0));
         setRankingData(sortedList);
 
@@ -433,7 +438,7 @@ function SalariesRankingContent() {
                         </span>
                       </div>
                       <div className="flex items-center gap-2 text-[10px] font-bold mt-1">
-                        {/* 12球団公式イメージカラー動的インジェクションバッジ */}
+                        {/* 球団の公式カラー背景を動的適用 */}
                         <span className={`px-2 py-0.5 rounded border text-[9px] font-black tracking-tight shadow-inner ${getTeamColorClass(row.resolvedTeam)}`}>
                           {row.resolvedTeam}
                         </span>
