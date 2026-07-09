@@ -41,7 +41,7 @@ const PACIFIC_TEAMS = ['オリックス', 'ロッテ', 'ソフトバンク', '�
 const FARM_ONLY_TEAMS = ['オイシックス', 'くふうハヤテ']; 
 
 const getTeamInfo = (teamName: string): { league: League | 'Other', shortName: string } => {
-  const cleanTeam = String(teamName).replace(/[\s　]+/g, '');
+  const cleanTeam = String(teamName).replace(/[\s ]+/g, '');
   if (cleanTeam.includes('阪神') || cleanTeam.includes('タイガース')) return { league: 'Central', shortName: '阪神' };
   if (cleanTeam.includes('広島') || cleanTeam.includes('カープ')) return { league: 'Central', shortName: '広島' };
   if (cleanTeam.includes('DeNA') || cleanTeam.includes('ベイスターズ')) return { league: 'Central', shortName: 'DeNA' };
@@ -94,7 +94,7 @@ const METRIC_INFO: Record<string, { desc: string, calc: string, benchmark: strin
   babip: { desc: 'グラウンド内に飛んだ打球がヒットになる確率。長期的には「.300」前後に収束するため、運の要素（上振れ・下振れ）を測る指標となる。', calc: '(安打 - 本塁打) ÷ (打数 - 三振 - 本塁打 + 犠飛)', benchmark: '.300より極端に高ければ上振れ(幸運)、低ければ下振れ(不運)の可能性が高い。' },
   era: { desc: '投手が9イニング（1試合）投げた場合に失う自責点の平均。', calc: '(自責点 × 9) ÷ 投球回', benchmark: '3.50で優秀な先発、2.00台でエース、1.00台は歴史的。' },
   so_pitch: { desc: '投手が奪った三振の総数。圧倒的な投球能力を示す。', calc: '奪三振数', benchmark: '先発でシーズン100〜150個、200個でタイトル級。' },
-  wins: { desc: '投手に記録された勝利数。', calc: 'リードした状態で規定回を投げ終え、勝利した場合等', benchmark: '10勝で一人前の先発、15勝で最多勝争い。' },
+  wins: { desc: '投家に記録された勝利数。', calc: 'リードした状態で規定回を投げ終え、勝利した場合等', benchmark: '10勝で一人前の先発、15勝で最多勝争い。' },
   sv: { desc: '僅差のリードを守り切って試合を終わらせた抑え投手の記録。', calc: 'セーブ条件を満たして登板し、リードを守り切る', benchmark: '20Sで優秀な守護神、30S以上でセーブ王争い。' },
   hp: { desc: 'セーブが付かない場面でリードを守った中継ぎ投手の評価指標。', calc: 'ホールド数 + 救援勝利数', benchmark: '20HPで優秀なセットアッパー、30HP以上でタイトル争い。' },
   k_bb_pct: { desc: '全打者に対する (奪三振-与四球) の割合。運に左右されない真の支配力。', calc: '((奪三振 - 与四球) ÷ 打者) × 100', benchmark: '15%で優秀、20%以上は球界を代表する圧倒的なエース。' },
@@ -240,9 +240,8 @@ function Leaderboard() {
             const is_qualified = pa >= Math.floor(teamGameCount * multiplier);
             const is_half_qualified = pa >= Math.floor((teamGameCount * multiplier) / 2);
 
-            // ★ 修正箇所：割合・平均指標の時のみ、規定打席による足切りを行う
-            // ※本塁打、安打、打点、WARなどの積み上げ指標の時はフィルターを強制無視する
-            const isRateStat = ['avg', 'ops', 'woba', 'isop', 'wrc_plus', 'babip', 'roman', 'cospa'].includes(sortKey);
+            // 💡【型パッチ①】：リテラル推論の罠を string[] キャストで完全消滅
+            const isRateStat = (['avg', 'ops', 'woba', 'isop', 'wrc_plus', 'babip', 'roman', 'cospa'] as string[]).includes(sortKey);
             if (isRateStat) {
               if (filterType === 'qualified' && !is_qualified) return;
               if (filterType === 'half' && !is_half_qualified) return;
@@ -289,9 +288,8 @@ function Leaderboard() {
             const is_qualified = ip >= (teamGameCount * multiplier);
             const is_half_qualified = ip >= ((teamGameCount * multiplier) / 2);
 
-            // ★ 修正箇所：割合・平均指標の時のみ、規定投球回による足切りを行う
-            // ※勝利、セーブ、奪三振、WARなどの積み上げ指標の時はフィルターを強制無視する
-            const isPitchRateStat = ['era', 'whip', 'k9', 'bb9', 'k_bb_pct', 'fip', 'unluck', 'babip', 'cospa'].includes(sortKey);
+            // 💡【型パッチ②】：リテラル推論の罠を string[] キャストで完全消滅
+            const isPitchRateStat = (['era', 'whip', 'k9', 'bb9', 'k_bb_pct', 'fip', 'unluck', 'babip', 'cospa'] as string[]).includes(sortKey);
             if (isPitchRateStat) {
               if (filterType === 'qualified' && !is_qualified) return;
               if (filterType === 'half' && !is_half_qualified) return;
@@ -336,7 +334,8 @@ function Leaderboard() {
         const sorted = filtered.sort((a, b) => {
           const valA = (a as any)[sortKey === 'babip' && role === 'pitcher' ? 'babip_pitch' : sortKey] ?? -999;
           const valB = (b as any)[sortKey === 'babip' && role === 'pitcher' ? 'babip_pitch' : sortKey] ?? -999;
-          if (['era', 'fip', 'whip', 'bb9'].includes(sortKey)) return valA - valB;
+          // 💡【型パッチ③】：ソート判断部のリテラルも string[] キャストで完全防弾化
+          if ((['era', 'fip', 'whip', 'bb9'] as string[]).includes(sortKey)) return valA - valB;
           return valB - valA;
         });
 
@@ -439,14 +438,18 @@ function Leaderboard() {
 
   return (
     <div className="max-w-4xl mx-auto">
-      {/* トップメニュー */}
+      
+      {/* 💴 修正・同期事実：TOPページと寸分狂わぬラベル名（ルーツ別ランキング / NPB総合リーダーボード）に統一し、年俸タブをドッキング！ */}
       <div className="flex bg-slate-200 p-1.5 rounded-2xl mb-6 shadow-inner">
         <Link href="/" className="flex-1 text-center py-3.5 rounded-xl text-sm font-black text-slate-500 hover:text-blue-900 transition-all flex items-center justify-center gap-2 hover:bg-slate-100/50">
-          <span className="text-lg">🌱</span> ルーツ別
+          <span className="text-lg">🌱</span> ルーツ別ランキング
         </Link>
         <div className="flex-1 text-center py-3.5 rounded-xl text-sm font-black bg-white text-blue-900 shadow-sm flex items-center justify-center gap-2">
-          <span className="text-lg">🏆</span> NPB総合
+          <span className="text-lg">🏆</span> NPB総合リーダーボード
         </div>
+        <Link href="/salaries?year=2026" className="flex-1 text-center py-3.5 rounded-xl text-sm font-black text-slate-500 hover:text-blue-900 transition-all flex items-center justify-center gap-2 hover:bg-slate-100/50">
+          <span className="text-lg">💴</span> 年俸ランキング
+        </Link>
       </div>
 
       <div className="bg-white rounded-2xl shadow-xl border-t-8 border-orange-500 p-5 mb-6">
