@@ -36,7 +36,7 @@ const ALL_TEAMS_LIST = [
 
 const YEARS_ARRAY = Array.from({ length: 2026 - 2013 + 1 }, (_, i) => 2026 - i);
 
-// 12球団公式イメージカラー動的適用バッジ
+// 12球団公式イメージカラー対応バッジ背景定義
 const getTeamColorClass = (teamName: string): string => {
   const clean = teamName || '';
   if (clean.includes('巨人') || clean.includes('読売') || clean.includes('ジャイアンツ')) return 'bg-orange-500 text-white border-orange-600';
@@ -84,20 +84,6 @@ const formatYAxisSalary = (value: any): string => {
   return `${numValue / 10000}万`;
 };
 
-const SalaryCustomTooltip = ({ active, payload }: any): React.ReactElement | null => {
-  if (active && payload && payload.length) {
-    const data = payload[0].payload;
-    return (
-      <div className="bg-white p-3 shadow-lg rounded-lg border border-slate-100 z-50 text-xs font-sans text-slate-800">
-        <p className="font-bold mb-1">📅 {data.year}年度</p>
-        <p className="mb-1"><span className="font-medium text-slate-400">所属:</span> {data.team_name}</p>
-        <p className="text-blue-600 font-bold text-sm"><span className="font-medium text-slate-400 text-xs">推定:</span> {formatSalaryLabel(data.salary)}</p>
-      </div>
-    );
-  }
-  return null;
-};
-
 // ==========================================
 // 2. コア・ランキング集計コンテンツ
 // ==========================================
@@ -114,6 +100,23 @@ function SalariesRankingContent() {
   const [rankingData, setRankingData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [summaryStats, setSummaryStats] = useState({ total: 0, avg: 0, count: 0 });
+
+  // 💡【デバッグボード専用ステート群】
+  const [debugLog, setDebugLog] = useState<{
+    masterCount: number;
+    salaryCount: number;
+    statsBCount: number;
+    statsPCount: number;
+    foreignerRawRecords: any[];
+    errorMsg: string | null;
+  }>({
+    masterCount: 0,
+    salaryCount: 0,
+    statsBCount: 0,
+    statsPCount: 0,
+    foreignerRawRecords: [],
+    errorMsg: null
+  });
 
   const updateParams = (key: string, value: string) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -137,10 +140,10 @@ function SalariesRankingContent() {
       try {
         setLoading(true);
 
-        // ① 選手マスターデータの並行ロード (プロパティ欠落を防ぐためselect('*')完全ロード)
+        // ① 選手マスターデータの並行ロード（limit5000解凍）
         const [resP1, resP2] = await Promise.all([
-          supabase.from('players').select('*'),
-          supabase.from('farm_players').select('*')
+          supabase.from('players').select('*').limit(5000),
+          supabase.from('farm_players').select('*').limit(5000)
         ]);
 
         const masterList = [...(resP1.data || []), ...(resP2.data || [])];
@@ -173,7 +176,7 @@ function SalariesRankingContent() {
         if (yearParam !== 'all') {
           salaryQuery = salaryQuery.eq('year', Number(yearParam));
         }
-        const { data: salaryData } = await salaryQuery;
+        const { data: salaryData, error: salaryError } = await salaryQuery;
 
         const salaryRecords = salaryData || [];
         const targetPlayerIds = Array.from(new Set(salaryRecords.map(s => String(s.player_id).padStart(8, '0'))));
@@ -185,10 +188,10 @@ function SalariesRankingContent() {
 
         if (targetPlayerIds.length > 0 && targetYears.length > 0) {
           const [b1, b2, p1, p2] = await Promise.all([
-            supabase.from('batting_stats').select('*').in('player_id', targetPlayerIds).in('年度', targetYears),
-            supabase.from('farm_batting_stats').select('*').in('player_id', targetPlayerIds).in('年度', targetYears),
-            supabase.from('pitching_stats').select('*').in('player_id', targetPlayerIds).in('年度', targetYears),
-            supabase.from('farm_pitching_stats').select('*').in('player_id', targetPlayerIds).in('年度', targetYears)
+            supabase.from('batting_stats').select('*').in('player_id', targetPlayerIds).in('年度', targetYears).limit(5000),
+            supabase.from('farm_batting_stats').select('*').in('player_id', targetPlayerIds).in('年度', targetYears).limit(5000),
+            supabase.from('pitching_stats').select('*').in('player_id', targetPlayerIds).in('年度', targetYears).limit(5000),
+            supabase.from('farm_pitching_stats').select('*').in('player_id', targetPlayerIds).in('年度', targetYears).limit(5000)
           ]);
           bData = [...(b1.data || []), ...(b2.data || [])];
           pData = [...(p1.data || []), ...(p2.data || [])];
@@ -199,20 +202,34 @@ function SalariesRankingContent() {
         bData.forEach(row => bMap.set(`${String(row.player_id).padStart(8, '0')}_${row.年度}`, row));
         pData.forEach(row => pMap.set(`${String(row.player_id).padStart(8, '0')}_${row.年度}`, row));
 
+        // 💡【デバッグあぶり出し】：ロード直後の生データからターゲット外国人選手を抽出してボードに流す
+        const matchedForeignersLog: any[] = [];
+
         // ④ 多重動的スコープJOIN結合処理
         const mergedList: any[] = [];
         let sumSalary = 0;
 
         salaryRecords.forEach(sal => {
-          let sId = String(sal.player_id).padStart(8, '0');
-          let nId = Number(sal.player_id);
-          let searchName = sal.player_name ? sal.player_name.trim() : '';
+          const sId = String(sal.player_id).padStart(8, '0');
+          const nId = Number(sal.player_id);
           const rawSalTeam = sal.team_name || '';
           const sYear = Number(sal.year);
+          let searchName = sal.player_name ? sal.player_name.trim() : '';
 
-          // 💡【最重要特権パッチ】：外国人スター選手の登録名・本名のすれ違いを完全に翻訳中和する変換テーブル
+          // デバッグ対象の簡易追跡ログ
+          if (searchName.includes('オスナ') || searchName.includes('スチュワート') || searchName.includes('ドミンゴ') || searchName.includes('サンタナ')) {
+            matchedForeignersLog.push({
+              rawNameInSalaryDB: sal.player_name,
+              rawIdInSalaryDB: sal.player_id,
+              teamInSalaryDB: sal.team_name,
+              yearInSalaryDB: sal.year,
+              salaryInSalaryDB: sal.salary
+            });
+          }
+
+          // 外国人スター選手用の翻訳クレンジング
           if (searchName === 'ドミンゴ' && rawSalTeam.includes('ヤクルト')) {
-            searchName = 'サンタナ'; // ドミンゴをNPB登録名のサンタナに強制クレンジング
+            searchName = 'サンタナ'; 
           }
 
           let cName = cleanNameKey(searchName);
@@ -220,7 +237,7 @@ function SalariesRankingContent() {
           // 3段階フォールバックによるマスター情報の紐付け
           let matchMeta = masterMap.get(sId) || masterMap.get(String(nId)) || masterMap.get(cName);
 
-          // マップをすり抜けた外国人選手用の球団コア名寄せエンジン
+          // 外国人名寄せ用：球団の通称コア単語による相互内包クロスジャッジ
           if (!matchMeta && searchName) {
             const getTeamCoreWord = (tName: string) => {
               const m = tName.match(/ヤクルト|ソフトバンク|巨人|読売|阪神|中日|DeNA|横浜|広島|西武|ロッテ|オリックス|楽天|オイシックス|ハヤテ/);
@@ -233,7 +250,6 @@ function SalariesRankingContent() {
               const nameMatch = cleanMName.includes(searchName) || searchName.includes(cleanMName);
               if (!nameMatch) return false;
 
-              // 球団名のコア単語による2重の相互内包クロスジャッジ
               const mTeamCore = getTeamCoreWord(p.team_name || '');
               return p.team_name.includes(salTeamCore) || rawSalTeam.includes(mTeamCore) || salTeamCore === mTeamCore;
             });
@@ -291,6 +307,16 @@ function SalariesRankingContent() {
           });
         });
 
+        // デバッグログの状態更新
+        setDebugLog({
+          masterCount: masterList.length,
+          salaryCount: salaryRecords.length,
+          statsBCount: bData.length,
+          statsPCount: pData.length,
+          foreignerRawRecords: matchedForeignersLog,
+          errorMsg: salaryError ? salaryError.message : null
+        });
+
         const sortedList = mergedList.sort((a, b) => Number(b.salary || 0) - Number(a.salary || 0));
         setRankingData(sortedList);
 
@@ -300,8 +326,9 @@ function SalariesRankingContent() {
           avg: sortedList.length > 0 ? Math.round(sumSalary / sortedList.length) : 0
         });
 
-      } catch (err) {
+      } catch (err: any) {
         console.error('年俸ランキング集計エラー:', err);
+        setDebugLog(prev => ({ ...prev, errorMsg: err?.message || '例外発生' }));
       } finally {
         setLoading(false);
       }
@@ -313,6 +340,29 @@ function SalariesRankingContent() {
   return (
     <div className="space-y-6">
       
+      {/* 🔍【復活・超強化型】データベース直結診断ボード */}
+      <div className="bg-slate-900 text-emerald-400 p-4 rounded-2xl text-[11px] font-mono leading-relaxed shadow-inner border-2 border-emerald-500/20">
+        <p className="font-black text-white text-xs mb-1.5 border-b border-slate-700 pb-1 flex items-center justify-between">
+          <span>🔍 データベース直結診断ボード (年俸ページ特設版)</span>
+          <span className="bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded text-[9px] animate-pulse">LIVE TRACKING</span>
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2 bg-black/30 p-2 rounded-lg text-slate-300">
+          <p>・マスター総数: <span className="text-yellow-300 font-bold">{debugLog.masterCount} 件</span></p>
+          <p>・年俸レコード数: <span className="text-yellow-300 font-bold">{debugLog.salaryCount} 件</span></p>
+          <p>・打撃スタッツ数: <span className="text-blue-300 font-bold">{debugLog.statsBCount} 件</span></p>
+          <p>・投手スタッツ数: <span className="text-blue-300 font-bold">{debugLog.statsPCount} 件</span></p>
+        </div>
+        <p>・現在のURLスコープ ➔ 年度: <span className="text-orange-400 font-bold">{yearParam}</span> / リーグ: <span className="text-orange-400 font-bold">{leagueParam}</span> / 区分: <span className="text-orange-400 font-bold">{roleParam}</span></p>
+        {debugLog.errorMsg && <p className="text-rose-400 font-bold mt-1">⚠️ SQL例外ログ: {debugLog.errorMsg}</p>}
+        <p className="text-slate-400 mt-2 border-t border-slate-800 pt-1.5">・DBからNext.jsに届いたターゲット外国人スターの生データ状態(JSON):</p>
+        <pre className="text-slate-300 bg-black/50 p-2 rounded mt-1 overflow-x-auto max-h-32 scrollbar-thin text-[10px]">
+          {debugLog.foreignerRawRecords.length === 0 
+            ? "// 現在のフィルター条件では、対象外国人（オスナ、スチュワート、ドミンゴ、サンタナ）の生データが1件も引っかかっていません"
+            : JSON.stringify(debugLog.foreignerRawRecords, null, 2)
+          }
+        </pre>
+      </div>
+
       {/* 🧭 Aコントロール：フィルターナビゲーション */}
       <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 space-y-4 text-black">
         {/* 年度・歴代切り替え */}
@@ -487,7 +537,7 @@ function SalariesRankingContent() {
                         <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest border-b pb-1">📊 {row.year}年 シーズン詳細投手スタッツ</p>
                         <div className="grid grid-cols-4 sm:grid-cols-8 gap-2 text-center">
                           <div className="bg-white p-1.5 rounded-lg border shadow-inner"><div className="text-[9px] font-bold text-slate-400">登板</div><div className="font-black text-slate-700 text-xs">{row.statP.登板 || 0}</div></div>
-                          <div className="bg-white p-1.5 rounded-lg border shadow-inner"><div className="text-[9px] font-bold text-slate-400">防御率</div><div className="font-black text-red-600 text-xs">{toF(row.statP.防御率).toFixed(2)}</div></div>
+                          <div className="bg-white p-1.5 rounded-lg border shadow-inner"><div className="text-[9px] font-bold text-red-600">防御率</div><div className="font-black text-red-600 text-xs">{toF(row.statP.防御率).toFixed(2)}</div></div>
                           <div className="bg-white p-1.5 rounded-lg border shadow-inner"><div className="text-[9px] font-bold text-slate-400">勝利</div><div className="font-bold text-slate-700 text-xs">{row.statP.勝利 || 0}</div></div>
                           <div className="bg-white p-1.5 rounded-lg border shadow-inner"><div className="text-[9px] font-bold text-slate-400">セーブ</div><div className="font-bold text-slate-700 text-xs">{row.statP.セーブ || 0}</div></div>
                           <div className="bg-white p-1.5 rounded-lg border shadow-inner"><div className="text-[9px] font-bold text-slate-400">投球回</div><div className="font-black text-slate-700 text-xs">{row.statP.投球回 || '0'}</div></div>
