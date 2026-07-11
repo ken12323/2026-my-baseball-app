@@ -36,7 +36,7 @@ const ALL_TEAMS_LIST = [
 
 const YEARS_ARRAY = Array.from({ length: 2026 - 2013 + 1 }, (_, i) => 2026 - i);
 
-// 12球団公式イメージカラー対応バッジ背景定義
+// 12球団公式イメージカラー動的適用バッジ背景定義
 const getTeamColorClass = (teamName: string): string => {
   const clean = teamName || '';
   if (clean.includes('巨人') || clean.includes('読売') || clean.includes('ジャイアンツ')) return 'bg-orange-500 text-white border-orange-600';
@@ -101,7 +101,7 @@ function SalariesRankingContent() {
   const [loading, setLoading] = useState(true);
   const [summaryStats, setSummaryStats] = useState({ total: 0, avg: 0, count: 0 });
 
-  // 💡【デバッグボード専用ステート群】
+  // 💡【診断ボード用ステート】
   const [debugLog, setDebugLog] = useState<{
     masterCount: number;
     salaryCount: number;
@@ -140,7 +140,7 @@ function SalariesRankingContent() {
       try {
         setLoading(true);
 
-        // ① 選手マスターデータの並行ロード（limit5000解凍）
+        // ① 選手マスターデータの並行ロード（limit 5000完全解凍）
         const [resP1, resP2] = await Promise.all([
           supabase.from('players').select('*').limit(5000),
           supabase.from('farm_players').select('*').limit(5000)
@@ -148,7 +148,13 @@ function SalariesRankingContent() {
 
         const masterList = [...(resP1.data || []), ...(resP2.data || [])];
         const masterMap = new Map();
-        const cleanNameKey = (name: string) => (name || '').replace(/[\s ]+/g, '');
+        
+        // 💡【超進化】：外国人特有の「全角イニシャル」「ドット」「Jr表記」を徹底クレンジングする関数
+        const cleanNameKey = (name: string) => {
+          return (name || '')
+            .replace(/[\s ]+/g, '') // 空白除去
+            .replace(/[A-Za-z]．|保持|・|Jr\.|ジュニア|・|．|\./g, ''); // ノイズ記号・ジュニア表記を完全消滅
+        };
 
         masterList.forEach(p => {
           const sId = String(p.player_id).padStart(8, '0');
@@ -202,10 +208,7 @@ function SalariesRankingContent() {
         bData.forEach(row => bMap.set(`${String(row.player_id).padStart(8, '0')}_${row.年度}`, row));
         pData.forEach(row => pMap.set(`${String(row.player_id).padStart(8, '0')}_${row.年度}`, row));
 
-        // 💡【デバッグあぶり出し】：ロード直後の生データからターゲット外国人選手を抽出してボードに流す
         const matchedForeignersLog: any[] = [];
-
-        // ④ 多重動的スコープJOIN結合処理
         const mergedList: any[] = [];
         let sumSalary = 0;
 
@@ -216,7 +219,6 @@ function SalariesRankingContent() {
           const sYear = Number(sal.year);
           let searchName = sal.player_name ? sal.player_name.trim() : '';
 
-          // デバッグ対象の簡易追跡ログ
           if (searchName.includes('オスナ') || searchName.includes('スチュワート') || searchName.includes('ドミンゴ') || searchName.includes('サンタナ')) {
             matchedForeignersLog.push({
               rawNameInSalaryDB: sal.player_name,
@@ -227,41 +229,49 @@ function SalariesRankingContent() {
             });
           }
 
-          // 外国人スター選手用の翻訳クレンジング
-          if (searchName === 'ドミンゴ' && rawSalTeam.includes('ヤクルト')) {
+          // 💡【事実補正】：年俸DBに格納されているヤクルトの「ドミンゴ」を、マスタ側の登録名「サンタナ」にダイレクト翻訳クレンジング
+          if (searchName.includes('ドミンゴ') && rawSalTeam.includes('ヤクルト')) {
             searchName = 'サンタナ'; 
           }
 
-          let cName = cleanNameKey(searchName);
+          const cName = cleanNameKey(searchName);
 
-          // 3段階フォールバックによるマスター情報の紐付け
-          let matchMeta = masterMap.get(sId) || masterMap.get(String(nId)) || masterMap.get(cName);
+          // 💡【バグの核心解決】：マスターマップから引く（不一致の仮IDがマスターに登録されている場合は無視し、名前優先ハントへ迂回させる）
+          let matchMeta = masterMap.get(cName) || masterMap.get(sId) || masterMap.get(String(nId));
 
-          // 外国人名寄せ用：球団の通称コア単語による相互内包クロスジャッジ
-          if (!matchMeta && searchName) {
+          // 球団通称コア単語による超強力な外国人あいまい名寄せエンジン
+          if (searchName) {
             const getTeamCoreWord = (tName: string) => {
               const m = tName.match(/ヤクルト|ソフトバンク|巨人|読売|阪神|中日|DeNA|横浜|広島|西武|ロッテ|オリックス|楽天|オイシックス|ハヤテ/);
               return m ? m[0] : tName.substring(0, 2);
             };
             const salTeamCore = getTeamCoreWord(rawSalTeam);
 
-            const foundPlayer = masterList.find(p => {
-              const cleanMName = p.player_name.replace(/[\s ]+/g, '');
-              const nameMatch = cleanMName.includes(searchName) || searchName.includes(cleanMName);
-              if (!nameMatch) return false;
+            // マップで完璧な一致が引けなかった、またはIDが幽霊状態の場合のみ、全件マスタから逆引きハント
+            if (!matchMeta || finalPosIsInvalid(matchMeta)) {
+              const foundPlayer = masterList.find(p => {
+                const cleanMName = cleanNameKey(p.player_name);
+                // 記号を剥ぎ取ったカタカナコア単語同士の一方内包ジャッジ（例：「オスナ」と「ロベルトオスナ」が100%結合！）
+                const nameMatch = cleanMName.includes(cName) || cName.includes(cleanMName);
+                if (!nameMatch) return false;
 
-              const mTeamCore = getTeamCoreWord(p.team_name || '');
-              return p.team_name.includes(salTeamCore) || rawSalTeam.includes(mTeamCore) || salTeamCore === mTeamCore;
-            });
+                const mTeamCore = getTeamCoreWord(p.team_name || '');
+                return p.team_name.includes(salTeamCore) || rawSalTeam.includes(mTeamCore) || salTeamCore === mTeamCore;
+              });
 
-            if (foundPlayer) {
-              matchMeta = {
-                player_id: String(foundPlayer.player_id).padStart(8, '0'),
-                player_name: foundPlayer.player_name,
-                position_detail: foundPlayer.position_detail || '不明',
-                team_name: foundPlayer.team_name || '不明'
-              };
+              if (foundPlayer) {
+                matchMeta = {
+                  player_id: String(foundPlayer.player_id).padStart(8, '0'),
+                  player_name: foundPlayer.player_name,
+                  position_detail: foundPlayer.position_detail || '不明',
+                  team_name: foundPlayer.team_name || '不明'
+                };
+              }
             }
+          }
+
+          function finalPosIsInvalid(meta: any) {
+            return !meta || meta.position_detail === '不明';
           }
 
           const finalName = matchMeta ? matchMeta.player_name : searchName;
@@ -307,7 +317,7 @@ function SalariesRankingContent() {
           });
         });
 
-        // デバッグログの状態更新
+        // 診断ボードステートの同期
         setDebugLog({
           masterCount: masterList.length,
           salaryCount: salaryRecords.length,
@@ -340,7 +350,7 @@ function SalariesRankingContent() {
   return (
     <div className="space-y-6">
       
-      {/* 🔍【復活・超強化型】データベース直結診断ボード */}
+      {/* 🔍 データベース直結診断ボード (完全維持) */}
       <div className="bg-slate-900 text-emerald-400 p-4 rounded-2xl text-[11px] font-mono leading-relaxed shadow-inner border-2 border-emerald-500/20">
         <p className="font-black text-white text-xs mb-1.5 border-b border-slate-700 pb-1 flex items-center justify-between">
           <span>🔍 データベース直結診断ボード (年俸ページ特設版)</span>
@@ -472,11 +482,9 @@ function SalariesRankingContent() {
                 {/* サマリーバー */}
                 <summary className="flex items-center justify-between p-4 cursor-pointer list-none select-none">
                   <div className="flex items-center gap-4 flex-1 min-w-0">
-                    {/* 順位バッジ */}
                     <div className={`w-8 h-8 rounded-xl flex items-center justify-center italic text-sm shrink-0 ${rankBadgeClass}`}>
                       {index + 1}
                     </div>
-                    {/* 選手基本メタ */}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <Link 
@@ -491,7 +499,6 @@ function SalariesRankingContent() {
                         </span>
                       </div>
                       <div className="flex items-center gap-2 text-[10px] font-bold mt-1">
-                        {/* 12球団公式イメージカラー動的バッジ背景 */}
                         <span className={`px-2 py-0.5 rounded border text-[9px] font-black tracking-tight shadow-inner ${getTeamColorClass(row.resolvedTeam)}`}>
                           {row.resolvedTeam}
                         </span>
