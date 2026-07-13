@@ -94,7 +94,6 @@ function SalariesRankingContent() {
   const [loading, setLoading] = useState(true);
   const [summaryStats, setSummaryStats] = useState({ total: 0, avg: 0, count: 0 });
 
-  // 💡 VS Codeエラー対策：すべての名称を「updateParams」へ100%完全統一
   const updateParams = (key: string, value: string) => {
     const params = new URLSearchParams(searchParams.toString());
     if (value === 'all' && key !== 'year') {
@@ -124,31 +123,13 @@ function SalariesRankingContent() {
         ]);
 
         const masterList = [...(resP1.data || []), ...(resP2.data || [])];
-        const masterMap = new Map();
         
-        // カタカナ・漢字コア単語抽出用のクレンジング処理
-        const cleanNameKey = (name: string) => {
-          return (name || '')
-            .replace(/[\s ]+/g, '')
-            .replace(/[A-Za-zＡ-Ｚａ-ｚ０-９\d．\.\/・\-\s_]/g, '')
-            .replace(/ジュニア|Jr\./g, '');
-        };
-
+        // 💡 データベース側の無傷のplayer_idのみを100%全面信頼して格納する、超高速一本釣りJOINマップ
+        const masterIdMap = new Map();
         masterList.forEach(p => {
-          const sId = String(p.player_id).padStart(8, '0');
-          const nId = Number(p.player_id);
-          const cName = cleanNameKey(p.player_name);
-
-          const meta = {
-            player_id: sId,
-            player_name: p.player_name,
-            position_detail: p.position_detail || '不明',
-            team_name: p.team_name || '不明'
-          };
-
-          masterMap.set(sId, meta);
-          masterMap.set(String(nId), meta);
-          if (cName) masterMap.set(cName, meta);
+          if (!p.player_id) return;
+          const cleanId = String(p.player_id).trim().padStart(8, '0');
+          masterIdMap.set(cleanId, p);
         });
 
         // ② 年俸ベースデータの取得（金額順トップ1000）
@@ -189,54 +170,18 @@ function SalariesRankingContent() {
         const mergedList: any[] = [];
         let sumSalary = 0;
 
-        const getTeamCoreWord = (tName: string) => {
-          const m = tName.match(/ヤクルト|ソフトバンク|巨人|読売|阪神|中日|DeNA|横浜|広島|西武|ロッテ|オリックス|楽天|オイシックス|ハヤテ/);
-          return m ? m[0] : tName.substring(0, 2);
-        };
-
         // ④ 結合・マージ処理
         salaryRecords.forEach(sal => {
-          const sId = String(sal.player_id).padStart(8, '0');
-          const nId = Number(sal.player_id);
-          const rawSalTeam = sal.team_name || '';
+          const sId = sal.player_id ? String(sal.player_id).trim().padStart(8, '0') : '';
           const sYear = Number(sal.year);
-          let searchName = sal.player_name ? sal.player_name.trim() : '';
 
-          if (searchName.includes('ドミンゴ') && (rawSalTeam.includes('ヤクルト') || rawSalTeam.includes('スワローズ'))) {
-            searchName = 'サンタナ'; 
-          }
+          // 💡 名前や球団名の比較による衝突バグを100%回避！現役選手IDのみによる完全一本釣り
+          const matchedPlayer = masterIdMap.get(sId);
 
-          const cName = cleanNameKey(searchName);
-          const salTeamCore = getTeamCoreWord(rawSalTeam);
-
-          // 💡【核心修正】：大元のDB名寄せが神修正されたため、古いID拒否パッチ（isForeignerStar）を完全撤去！
-          // DB側の正しいplayer_id（sId）を100%最優先でストレートに全面信頼してマスターからハントします。
-          let matchMeta = masterMap.get(sId) || masterMap.get(String(nId)) || masterMap.get(cName);
-
-          if (searchName && !matchMeta) {
-            const foundPlayer = masterList.find(p => {
-              const cleanMName = cleanNameKey(p.player_name);
-              const nameMatch = cleanMName.includes(cName) || cName.includes(cleanMName);
-              if (!nameMatch) return false;
-
-              const mTeamCore = getTeamCoreWord(p.team_name || '');
-              return p.team_name.includes(salTeamCore) || rawSalTeam.includes(mTeamCore) || salTeamCore === mTeamCore;
-            });
-
-            if (foundPlayer) {
-              matchMeta = {
-                player_id: String(foundPlayer.player_id).padStart(8, '0'),
-                player_name: foundPlayer.player_name,
-                position_detail: foundPlayer.position_detail || '不明',
-                team_name: foundPlayer.team_name || '不明'
-              };
-            }
-          }
-
-          const finalName = matchMeta ? matchMeta.player_name : searchName;
-          const finalId = matchMeta ? matchMeta.player_id : sId;
-          const finalPos = matchMeta ? matchMeta.position_detail : '不明';
-          const finalTeam = sal.team_name || (matchMeta ? matchMeta.team_name : '不明');
+          const finalName = matchedPlayer ? matchedPlayer.player_name : (sal.player_name || '不明');
+          const finalId = matchedPlayer ? String(matchedPlayer.player_id).padStart(8, '0') : sId;
+          const finalPos = matchedPlayer ? (matchedPlayer.position_detail || '不明') : '不明';
+          const finalTeam = sal.team_name || (matchedPlayer ? matchedPlayer.team_name : '不明');
 
           let matchedLeague: 'central' | 'pacific' | 'farm' = 'farm';
           for (const [tKey, lg] of Object.entries(TEAM_LEAGUE_MAP)) {
