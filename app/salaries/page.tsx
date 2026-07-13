@@ -94,7 +94,7 @@ function SalariesRankingContent() {
   const [loading, setLoading] = useState(true);
   const [summaryStats, setSummaryStats] = useState({ total: 0, avg: 0, count: 0 });
 
-  // 💡 VS Codeエラー対策：名称不一致バグを防ぐため、完全に「updateParams」で統一！
+  // 💡 VS Codeエラー対策：すべての名称を「updateParams」へ100%完全統一
   const updateParams = (key: string, value: string) => {
     const params = new URLSearchParams(searchParams.toString());
     if (value === 'all' && key !== 'year') {
@@ -166,7 +166,7 @@ function SalariesRankingContent() {
         const targetPlayerIds = Array.from(new Set(salaryRecords.map(s => String(s.player_id).padStart(8, '0'))));
         const targetYears = Array.from(new Set(salaryRecords.map(s => Number(s.year))));
 
-        // ③ 各年度の成績スタッツを一括一元回収
+        // ③ 各年度の成績スタッツを一括回収
         let bData: any[] = [];
         let pData: any[] = [];
 
@@ -209,32 +209,27 @@ function SalariesRankingContent() {
           const cName = cleanNameKey(searchName);
           const salTeamCore = getTeamCoreWord(rawSalTeam);
 
-          const isForeignerStar = cName.includes('オスナ') || cName.includes('スチュワート') || cName.includes('サンタナ');
+          // 💡【核心修正】：大元のDB名寄せが神修正されたため、古いID拒否パッチ（isForeignerStar）を完全撤去！
+          // DB側の正しいplayer_id（sId）を100%最優先でストレートに全面信頼してマスターからハントします。
+          let matchMeta = masterMap.get(sId) || masterMap.get(String(nId)) || masterMap.get(cName);
 
-          let matchMeta = null;
-          if (!isForeignerStar) {
-            matchMeta = masterMap.get(sId) || masterMap.get(String(nId)) || masterMap.get(cName);
-          }
+          if (searchName && !matchMeta) {
+            const foundPlayer = masterList.find(p => {
+              const cleanMName = cleanNameKey(p.player_name);
+              const nameMatch = cleanMName.includes(cName) || cName.includes(cleanMName);
+              if (!nameMatch) return false;
 
-          if (searchName) {
-            if (!matchMeta) {
-              const foundPlayer = masterList.find(p => {
-                const cleanMName = cleanNameKey(p.player_name);
-                const nameMatch = cleanMName.includes(cName) || cName.includes(cleanMName);
-                if (!nameMatch) return false;
+              const mTeamCore = getTeamCoreWord(p.team_name || '');
+              return p.team_name.includes(salTeamCore) || rawSalTeam.includes(mTeamCore) || salTeamCore === mTeamCore;
+            });
 
-                const mTeamCore = getTeamCoreWord(p.team_name || '');
-                return p.team_name.includes(salTeamCore) || rawSalTeam.includes(mTeamCore) || salTeamCore === mTeamCore;
-              });
-
-              if (foundPlayer) {
-                matchMeta = {
-                  player_id: String(foundPlayer.player_id).padStart(8, '0'),
-                  player_name: foundPlayer.player_name,
-                  position_detail: foundPlayer.position_detail || '不明',
-                  team_name: foundPlayer.team_name || '不明'
-                };
-              }
+            if (foundPlayer) {
+              matchMeta = {
+                player_id: String(foundPlayer.player_id).padStart(8, '0'),
+                player_name: foundPlayer.player_name,
+                position_detail: foundPlayer.position_detail || '不明',
+                team_name: foundPlayer.team_name || '不明'
+              };
             }
           }
 
