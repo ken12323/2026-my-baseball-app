@@ -77,13 +77,6 @@ const formatSalaryLabel = (value: number): string => {
   return `${Math.floor(value / 10000)}万円`;
 };
 
-const formatYAxisSalary = (value: any): string => {
-  const numValue = Number(value);
-  if (isNaN(numValue)) return String(value);
-  if (numValue >= 100000000) return `${numValue / 100000000}億円`;
-  return `${numValue / 10000}万`;
-};
-
 // ==========================================
 // 2. コア・ランキング集計コンテンツ
 // ==========================================
@@ -101,23 +94,7 @@ function SalariesRankingContent() {
   const [loading, setLoading] = useState(true);
   const [summaryStats, setSummaryStats] = useState({ total: 0, avg: 0, count: 0 });
 
-  // 💡【診断ボード用ステート】
-  const [debugLog, setDebugLog] = useState<{
-    masterCount: number;
-    salaryCount: number;
-    statsBCount: number;
-    statsPCount: number;
-    foreignerRawRecords: any[];
-    errorMsg: string | null;
-  }>({
-    masterCount: 0,
-    salaryCount: 0,
-    statsBCount: 0,
-    statsPCount: 0,
-    foreignerRawRecords: [],
-    errorMsg: null
-  });
-
+  // 💡 VS Codeエラー対策：名称不一致バグを防ぐため、完全に「updateParams」で統一！
   const updateParams = (key: string, value: string) => {
     const params = new URLSearchParams(searchParams.toString());
     if (value === 'all' && key !== 'year') {
@@ -149,11 +126,12 @@ function SalariesRankingContent() {
         const masterList = [...(resP1.data || []), ...(resP2.data || [])];
         const masterMap = new Map();
         
-        // 💡【超進化】：外国人特有の「全角イニシャル」「ドット」「Jr表記」を徹底クレンジングする関数
+        // カタカナ・漢字コア単語抽出用のクレンジング処理
         const cleanNameKey = (name: string) => {
           return (name || '')
-            .replace(/[\s ]+/g, '') // 空白除去
-            .replace(/[A-Za-z]．|保持|・|Jr\.|ジュニア|・|．|\./g, ''); // ノイズ記号・ジュニア表記を完全消滅
+            .replace(/[\s ]+/g, '')
+            .replace(/[A-Za-zＡ-Ｚａ-ｚ０-９\d．\.\/・\-\s_]/g, '')
+            .replace(/ジュニア|Jr\./g, '');
         };
 
         masterList.forEach(p => {
@@ -173,7 +151,7 @@ function SalariesRankingContent() {
           if (cName) masterMap.set(cName, meta);
         });
 
-        // ② 年俸ベースデータの取得
+        // ② 年俸ベースデータの取得（金額順トップ1000）
         let salaryQuery = supabase.from('player_salaries')
           .select('*')
           .order('salary', { ascending: false })
@@ -182,13 +160,13 @@ function SalariesRankingContent() {
         if (yearParam !== 'all') {
           salaryQuery = salaryQuery.eq('year', Number(yearParam));
         }
-        const { data: salaryData, error: salaryError } = await salaryQuery;
+        const { data: salaryData } = await salaryQuery;
 
         const salaryRecords = salaryData || [];
         const targetPlayerIds = Array.from(new Set(salaryRecords.map(s => String(s.player_id).padStart(8, '0'))));
         const targetYears = Array.from(new Set(salaryRecords.map(s => Number(s.year))));
 
-        // ③ 各年度の成績スタッツをピンポイントで動的インクエリ回収
+        // ③ 各年度の成績スタッツを一括一元回収
         let bData: any[] = [];
         let pData: any[] = [];
 
@@ -208,10 +186,15 @@ function SalariesRankingContent() {
         bData.forEach(row => bMap.set(`${String(row.player_id).padStart(8, '0')}_${row.年度}`, row));
         pData.forEach(row => pMap.set(`${String(row.player_id).padStart(8, '0')}_${row.年度}`, row));
 
-        const matchedForeignersLog: any[] = [];
         const mergedList: any[] = [];
         let sumSalary = 0;
 
+        const getTeamCoreWord = (tName: string) => {
+          const m = tName.match(/ヤクルト|ソフトバンク|巨人|読売|阪神|中日|DeNA|横浜|広島|西武|ロッテ|オリックス|楽天|オイシックス|ハヤテ/);
+          return m ? m[0] : tName.substring(0, 2);
+        };
+
+        // ④ 結合・マージ処理
         salaryRecords.forEach(sal => {
           const sId = String(sal.player_id).padStart(8, '0');
           const nId = Number(sal.player_id);
@@ -219,39 +202,24 @@ function SalariesRankingContent() {
           const sYear = Number(sal.year);
           let searchName = sal.player_name ? sal.player_name.trim() : '';
 
-          if (searchName.includes('オスナ') || searchName.includes('スチュワート') || searchName.includes('ドミンゴ') || searchName.includes('サンタナ')) {
-            matchedForeignersLog.push({
-              rawNameInSalaryDB: sal.player_name,
-              rawIdInSalaryDB: sal.player_id,
-              teamInSalaryDB: sal.team_name,
-              yearInSalaryDB: sal.year,
-              salaryInSalaryDB: sal.salary
-            });
-          }
-
-          // 💡【事実補正】：年俸DBに格納されているヤクルトの「ドミンゴ」を、マスタ側の登録名「サンタナ」にダイレクト翻訳クレンジング
-          if (searchName.includes('ドミンゴ') && rawSalTeam.includes('ヤクルト')) {
+          if (searchName.includes('ドミンゴ') && (rawSalTeam.includes('ヤクルト') || rawSalTeam.includes('スワローズ'))) {
             searchName = 'サンタナ'; 
           }
 
           const cName = cleanNameKey(searchName);
+          const salTeamCore = getTeamCoreWord(rawSalTeam);
 
-          // 💡【バグの核心解決】：マスターマップから引く（不一致の仮IDがマスターに登録されている場合は無視し、名前優先ハントへ迂回させる）
-          let matchMeta = masterMap.get(cName) || masterMap.get(sId) || masterMap.get(String(nId));
+          const isForeignerStar = cName.includes('オスナ') || cName.includes('スチュワート') || cName.includes('サンタナ');
 
-          // 球団通称コア単語による超強力な外国人あいまい名寄せエンジン
+          let matchMeta = null;
+          if (!isForeignerStar) {
+            matchMeta = masterMap.get(sId) || masterMap.get(String(nId)) || masterMap.get(cName);
+          }
+
           if (searchName) {
-            const getTeamCoreWord = (tName: string) => {
-              const m = tName.match(/ヤクルト|ソフトバンク|巨人|読売|阪神|中日|DeNA|横浜|広島|西武|ロッテ|オリックス|楽天|オイシックス|ハヤテ/);
-              return m ? m[0] : tName.substring(0, 2);
-            };
-            const salTeamCore = getTeamCoreWord(rawSalTeam);
-
-            // マップで完璧な一致が引けなかった、またはIDが幽霊状態の場合のみ、全件マスタから逆引きハント
-            if (!matchMeta || finalPosIsInvalid(matchMeta)) {
+            if (!matchMeta) {
               const foundPlayer = masterList.find(p => {
                 const cleanMName = cleanNameKey(p.player_name);
-                // 記号を剥ぎ取ったカタカナコア単語同士の一方内包ジャッジ（例：「オスナ」と「ロベルトオスナ」が100%結合！）
                 const nameMatch = cleanMName.includes(cName) || cName.includes(cleanMName);
                 if (!nameMatch) return false;
 
@@ -268,10 +236,6 @@ function SalariesRankingContent() {
                 };
               }
             }
-          }
-
-          function finalPosIsInvalid(meta: any) {
-            return !meta || meta.position_detail === '不明';
           }
 
           const finalName = matchMeta ? matchMeta.player_name : searchName;
@@ -294,7 +258,7 @@ function SalariesRankingContent() {
           const isPitcherRole = finalPos.includes('投手') || pMap.has(lookupKey) || (statP !== undefined);
           const currentRole: 'hitter' | 'pitcher' = isPitcherRole ? 'pitcher' : 'hitter';
 
-          // URLパラメータに基づく厳格なフィルター
+          // URLパラメータフィルター
           if (leagueParam !== 'all' && matchedLeague !== leagueParam) return;
           if (roleParam !== 'all' && currentRole !== roleParam) return;
           if (teamParam !== 'all') {
@@ -317,16 +281,6 @@ function SalariesRankingContent() {
           });
         });
 
-        // 診断ボードステートの同期
-        setDebugLog({
-          masterCount: masterList.length,
-          salaryCount: salaryRecords.length,
-          statsBCount: bData.length,
-          statsPCount: pData.length,
-          foreignerRawRecords: matchedForeignersLog,
-          errorMsg: salaryError ? salaryError.message : null
-        });
-
         const sortedList = mergedList.sort((a, b) => Number(b.salary || 0) - Number(a.salary || 0));
         setRankingData(sortedList);
 
@@ -336,9 +290,8 @@ function SalariesRankingContent() {
           avg: sortedList.length > 0 ? Math.round(sumSalary / sortedList.length) : 0
         });
 
-      } catch (err: any) {
+      } catch (err) {
         console.error('年俸ランキング集計エラー:', err);
-        setDebugLog(prev => ({ ...prev, errorMsg: err?.message || '例外発生' }));
       } finally {
         setLoading(false);
       }
@@ -350,29 +303,6 @@ function SalariesRankingContent() {
   return (
     <div className="space-y-6">
       
-      {/* 🔍 データベース直結診断ボード (完全維持) */}
-      <div className="bg-slate-900 text-emerald-400 p-4 rounded-2xl text-[11px] font-mono leading-relaxed shadow-inner border-2 border-emerald-500/20">
-        <p className="font-black text-white text-xs mb-1.5 border-b border-slate-700 pb-1 flex items-center justify-between">
-          <span>🔍 データベース直結診断ボード (年俸ページ特設版)</span>
-          <span className="bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded text-[9px] animate-pulse">LIVE TRACKING</span>
-        </p>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2 bg-black/30 p-2 rounded-lg text-slate-300">
-          <p>・マスター総数: <span className="text-yellow-300 font-bold">{debugLog.masterCount} 件</span></p>
-          <p>・年俸レコード数: <span className="text-yellow-300 font-bold">{debugLog.salaryCount} 件</span></p>
-          <p>・打撃スタッツ数: <span className="text-blue-300 font-bold">{debugLog.statsBCount} 件</span></p>
-          <p>・投手スタッツ数: <span className="text-blue-300 font-bold">{debugLog.statsPCount} 件</span></p>
-        </div>
-        <p>・現在のURLスコープ ➔ 年度: <span className="text-orange-400 font-bold">{yearParam}</span> / リーグ: <span className="text-orange-400 font-bold">{leagueParam}</span> / 区分: <span className="text-orange-400 font-bold">{roleParam}</span></p>
-        {debugLog.errorMsg && <p className="text-rose-400 font-bold mt-1">⚠️ SQL例外ログ: {debugLog.errorMsg}</p>}
-        <p className="text-slate-400 mt-2 border-t border-slate-800 pt-1.5">・DBからNext.jsに届いたターゲット外国人スターの生データ状態(JSON):</p>
-        <pre className="text-slate-300 bg-black/50 p-2 rounded mt-1 overflow-x-auto max-h-32 scrollbar-thin text-[10px]">
-          {debugLog.foreignerRawRecords.length === 0 
-            ? "// 現在のフィルター条件では、対象外国人（オスナ、スチュワート、ドミンゴ、サンタナ）の生データが1件も引っかかっていません"
-            : JSON.stringify(debugLog.foreignerRawRecords, null, 2)
-          }
-        </pre>
-      </div>
-
       {/* 🧭 Aコントロール：フィルターナビゲーション */}
       <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 space-y-4 text-black">
         {/* 年度・歴代切り替え */}
@@ -485,6 +415,7 @@ function SalariesRankingContent() {
                     <div className={`w-8 h-8 rounded-xl flex items-center justify-center italic text-sm shrink-0 ${rankBadgeClass}`}>
                       {index + 1}
                     </div>
+                    {/* 選手基本メタ */}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <Link 
