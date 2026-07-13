@@ -116,15 +116,39 @@ function SalariesRankingContent() {
       try {
         setLoading(true);
 
-        // ① 選手マスターデータの並行ロード（limit 5000完全解凍）
-        const [resP1, resP2] = await Promise.all([
-          supabase.from('players').select('*').limit(5000),
-          supabase.from('farm_players').select('*').limit(5000)
-        ]);
+        const masterList: any[] = [];
+        const pageSize = 1000;
 
-        const masterList = [...(resP1.data || []), ...(resP2.data || [])];
+        // ページネーションのクエリすき間によるレコード抜け落ちを防ぐため、厳密なorderソート順を完全固定
+        // 1. 1軍マスター全件ロード
+        let start = 0;
+        while (true) {
+          const { data, error } = await supabase
+            .from('players')
+            .select('*')
+            .order('player_id', { ascending: true })
+            .range(start, start + pageSize - 1);
+          if (error || !data || data.length === 0) break;
+          masterList.push(...data);
+          if (data.length < pageSize) break;
+          start += pageSize;
+        }
+
+        // 2. 2軍マスター全件ロード
+        start = 0;
+        while (true) {
+          const { data, error } = await supabase
+            .from('farm_players')
+            .select('*')
+            .order('player_id', { ascending: true })
+            .range(start, start + pageSize - 1);
+          if (error || !data || data.length === 0) break;
+          masterList.push(...data);
+          if (data.length < pageSize) break;
+          start += pageSize;
+        }
         
-        // 💡 データベース側の無傷のplayer_idのみを100%全面信頼して格納する、超高速一本釣りJOINマップ
+        // ID引き当て用高速一本釣りマップ成形
         const masterIdMap = new Map();
         masterList.forEach(p => {
           if (!p.player_id) return;
@@ -132,7 +156,15 @@ function SalariesRankingContent() {
           masterIdMap.set(cleanId, p);
         });
 
-        // ② 年俸ベースデータの取得（金額順トップ1000）
+        // 記号剥離クレンジング関数
+        const cleanNameKey = (name: string) => {
+          return (name || '')
+            .replace(/[\s ]+/g, '')
+            .replace(/[A-Za-zＡ-Ｚａ-ｚ０-９\d．\.\/・\-\s_]/g, '')
+            .replace(/ジュニア|Jr\./g, '');
+        };
+
+        // ② 推定年俸ベースデータの取得（金額順トップ1000）
         let salaryQuery = supabase.from('player_salaries')
           .select('*')
           .order('salary', { ascending: false })
@@ -170,15 +202,39 @@ function SalariesRankingContent() {
         const mergedList: any[] = [];
         let sumSalary = 0;
 
+        const getTeamCoreWord = (tName: string) => {
+          const m = tName.match(/ヤクルト|ソフトバンク|巨人|読売|阪神|中日|DeNA|横浜|広島|西武|ロッテ|オリックス|楽天|オイシックス|ハヤテ/);
+          return m ? m[0] : tName.substring(0, 2);
+        };
+
         // ④ 結合・マージ処理
         salaryRecords.forEach(sal => {
           const sId = sal.player_id ? String(sal.player_id).trim().padStart(8, '0') : '';
           const sYear = Number(sal.year);
+          const rawSalTeam = sal.team_name || ''; // 💡 ここをしっかり補正定義してエラーを完全破壊！
+          let searchName = sal.player_name ? sal.player_name.trim() : '';
 
-          // 💡 名前や球団名の比較による衝突バグを100%回避！現役選手IDのみによる完全一本釣り
-          const matchedPlayer = masterIdMap.get(sId);
+          if (searchName.includes('ドミンゴ') && (rawSalTeam.includes('ヤクルト') || rawSalTeam.includes('スワローズ'))) {
+            searchName = 'サンタナ'; 
+          }
 
-          const finalName = matchedPlayer ? matchedPlayer.player_name : (sal.player_name || '不明');
+          const cName = cleanNameKey(searchName);
+          const salTeamCore = getTeamCoreWord(rawSalTeam);
+
+          // ID完全一致の「一本釣り」を主軸にしつつ、すれ違い対策に「球団コア×名前部分一致」のセーフティネットを同時配備する鉄壁の2段構え
+          let matchedPlayer = masterIdMap.get(sId);
+
+          if (!matchedPlayer && searchName) {
+            matchedPlayer = masterList.find(p => {
+              const mTeamCore = getTeamCoreWord(p.team_name || '');
+              if (mTeamCore !== salTeamCore) return false; // 球団コアが不一致の別人（例：ソフトバンクのオスナとヤクルトのオスナ）を完全ガード
+
+              const cleanMName = cleanNameKey(p.player_name);
+              return cleanMName.includes(cName) || cName.includes(cleanMName);
+            });
+          }
+
+          const finalName = matchedPlayer ? matchedPlayer.player_name : searchName;
           const finalId = matchedPlayer ? String(matchedPlayer.player_id).padStart(8, '0') : sId;
           const finalPos = matchedPlayer ? (matchedPlayer.position_detail || '不明') : '不明';
           const finalTeam = sal.team_name || (matchedPlayer ? matchedPlayer.team_name : '不明');
