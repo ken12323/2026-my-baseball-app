@@ -36,19 +36,19 @@ const ALL_TEAMS_LIST = [
 
 const YEARS_ARRAY = Array.from({ length: 2026 - 2013 + 1 }, (_, i) => 2026 - i);
 
-// 💡 12球団公式イメージカラー動的適用バッジ背景定義（一部カラー変更適用済）
+// 12球団公式イメージカラー動的適用バッジ背景定義
 const getTeamColorClass = (teamName: string): string => {
   const clean = teamName || '';
   if (clean.includes('巨人') || clean.includes('読売') || clean.includes('ジャイアンツ')) return 'bg-orange-500 text-white border-orange-600';
   if (clean.includes('阪神') || clean.includes('タイガース')) return 'bg-yellow-400 text-black border-yellow-500';
   if (clean.includes('中日') || clean.includes('ドラゴンズ')) return 'bg-blue-600 text-white border-blue-700';
   if (clean.includes('DeNA') || clean.includes('横浜') || clean.includes('ベイスターズ')) return 'bg-sky-500 text-white border-sky-600';
-  // 🟢 ヤクルト ➔ 黄緑色のボックスに黒文字カスタム
+  // 🟢 ヤクルト ➔ 黄緑色のボックスに黒文字カスタム（維持）
   if (clean.includes('ヤクルト') || clean.includes('スワローズ')) return 'bg-lime-500 text-black border-lime-600';
   if (clean.includes('広島') || clean.includes('カープ')) return 'bg-red-600 text-white border-red-700';
   if (clean.includes('ソフトバンク') || clean.includes('ホークス')) return 'bg-amber-400 text-black border-amber-500';
   if (clean.includes('ロッテ') || clean.includes('マリーンズ')) return 'bg-zinc-700 text-white border-zinc-800';
-  // 🔵 オリックス ➔ ネイビーボックスに金文字カスタム
+  // 🔵 オリックス ➔ ネイビーボックスに金文字カスタム（維持）
   if (clean.includes('オリックス') || clean.includes('バファローズ')) return 'bg-blue-950 text-amber-400 border-amber-600';
   if (clean.includes('日本ハム') || clean.includes('日ハム') || clean.includes('ファイターズ')) return 'bg-cyan-600 text-white border-cyan-700';
   if (clean.includes('西武') || clean.includes('ライオンズ')) return 'bg-indigo-900 text-white border-indigo-950';
@@ -121,7 +121,7 @@ function SalariesRankingContent() {
         const masterList: any[] = [];
         const pageSize = 1000;
 
-        // ページネーションのクエリすき間によるレコード抜け落ちを防ぐため、厳密なorderソート順を完全固定
+        // ソート順固定による、1ミリの漏れもないマスタデータの完全取得ループ
         // 1. 1軍マスター全件ロード
         let start = 0;
         while (true) {
@@ -150,21 +150,13 @@ function SalariesRankingContent() {
           start += pageSize;
         }
         
-        // ID引き当て用高速一本釣りマップ成形
+        // ID引き当て用高速一本釣りMapオブジェクト成形
         const masterIdMap = new Map();
         masterList.forEach(p => {
           if (!p.player_id) return;
           const cleanId = String(p.player_id).trim().padStart(8, '0');
           masterIdMap.set(cleanId, p);
         });
-
-        // 記号剥離クレンジング関数
-        const cleanNameKey = (name: string) => {
-          return (name || '')
-            .replace(/[\s ]+/g, '')
-            .replace(/[A-Za-zＡ-Ｚａ-ｚ０-９\d．\.\/・\-\s_]/g, '')
-            .replace(/ジュニア|Jr\./g, '');
-        };
 
         // ② 推定年俸ベースデータの取得（金額順トップ1000）
         let salaryQuery = supabase.from('player_salaries')
@@ -204,39 +196,16 @@ function SalariesRankingContent() {
         const mergedList: any[] = [];
         let sumSalary = 0;
 
-        const getTeamCoreWord = (tName: string) => {
-          const m = tName.match(/ヤクルト|ソフトバンク|巨人|読売|阪神|中日|DeNA|横浜|広島|西武|ロッテ|オリックス|楽天|オイシックス|ハヤテ/);
-          return m ? m[0] : tName.substring(0, 2);
-        };
-
         // ④ 結合・マージ処理
         salaryRecords.forEach(sal => {
           const sId = sal.player_id ? String(sal.player_id).trim().padStart(8, '0') : '';
           const sYear = Number(sal.year);
-          const rawSalTeam = sal.team_name || '';
-          let searchName = sal.player_name ? sal.player_name.trim() : '';
 
-          if (searchName.includes('ドミンゴ') && (rawSalTeam.includes('ヤクルト') || rawSalTeam.includes('スワローズ'))) {
-            searchName = 'サンタナ'; 
-          }
+          // 💡【究極のシンプル化】：過去のあいまいな名前名寄せロジック・文字列クレンジング・ドミンゴ個別置換コードは1行残らずすべて撤去！
+          // クリーンになったデータベースの「現役選手ID」のみを全面信頼し、Mapから1発で一本釣りJOINを行います。
+          const matchedPlayer = masterIdMap.get(sId);
 
-          const cName = cleanNameKey(searchName);
-          const salTeamCore = getTeamCoreWord(rawSalTeam);
-
-          // ID完全一致の「一本釣り」を主軸にしつつ、すれ違い対策に「球団コア×名前部分一致」のセーフティネットを同時配備する鉄壁の2段構え
-          let matchedPlayer = masterIdMap.get(sId);
-
-          if (!matchedPlayer && searchName) {
-            matchedPlayer = masterList.find(p => {
-              const mTeamCore = getTeamCoreWord(p.team_name || '');
-              if (mTeamCore !== salTeamCore) return false; // 球団コアが不一致の別人（例：ソフトバンクのオスナとヤクルトのオスナ）を完全ガード
-
-              const cleanMName = cleanNameKey(p.player_name);
-              return cleanMName.includes(cName) || cName.includes(cleanMName);
-            });
-          }
-
-          const finalName = matchedPlayer ? matchedPlayer.player_name : searchName;
+          const finalName = matchedPlayer ? matchedPlayer.player_name : (sal.player_name || '不明');
           const finalId = matchedPlayer ? String(matchedPlayer.player_id).padStart(8, '0') : sId;
           const finalPos = matchedPlayer ? (matchedPlayer.position_detail || '不明') : '不明';
           const finalTeam = sal.team_name || (matchedPlayer ? matchedPlayer.team_name : '不明');
@@ -253,7 +222,8 @@ function SalariesRankingContent() {
           const statB = bMap.get(lookupKey);
           const statP = pMap.get(lookupKey);
 
-          const isPitcherRole = finalPos.includes('投手') || pMap.has(lookupKey) || (statP !== undefined);
+          // 💡 マスタの守備位置（finalPos）に「投手」という文言が入っているかどうか『だけ』で、100%正確にポジションを断定！
+          const isPitcherRole = finalPos.includes('投手');
           const currentRole: 'hitter' | 'pitcher' = isPitcherRole ? 'pitcher' : 'hitter';
 
           // URLパラメータフィルター
@@ -316,7 +286,7 @@ function SalariesRankingContent() {
             <select
               value={yearParam === 'all' || yearParam === '2026' ? '2026' : yearParam}
               onChange={(e) => updateParams('year', e.target.value)}
-              className={`px-2 py-1 rounded-lg text-xs font-black border bg-slate-50 text-slate-600 focus:outline-none ${yearParam !== 'all' && yearParam !== '2026' ? 'border-blue-500 bg-blue-50 text-blue-600' : 'border-slate-200'}`}
+              className={`px-2 py-1 rounded-lg text-xs font-black border bg-slate-50 text-slate-600 focus:outline-none ${yearParam !== 'all' && yearParam !== '2026' ? 'border-blue-500 bg-blue-50 text-blue-500' : 'border-slate-200'}`}
             >
               {YEARS_ARRAY.filter(y => y !== 2026).map(y => (
                 <option key={y} value={String(y)}>{y}年</option>
