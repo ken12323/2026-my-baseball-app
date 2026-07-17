@@ -36,18 +36,20 @@ const ALL_TEAMS_LIST = [
 
 const YEARS_ARRAY = Array.from({ length: 2026 - 2013 + 1 }, (_, i) => 2026 - i);
 
-// 12球団公式イメージカラー動的適用バッジ背景定義
+// 💡 12球団公式イメージカラー動的適用バッジ背景定義（一部カラー変更適用済）
 const getTeamColorClass = (teamName: string): string => {
   const clean = teamName || '';
   if (clean.includes('巨人') || clean.includes('読売') || clean.includes('ジャイアンツ')) return 'bg-orange-500 text-white border-orange-600';
   if (clean.includes('阪神') || clean.includes('タイガース')) return 'bg-yellow-400 text-black border-yellow-500';
   if (clean.includes('中日') || clean.includes('ドラゴンズ')) return 'bg-blue-600 text-white border-blue-700';
   if (clean.includes('DeNA') || clean.includes('横浜') || clean.includes('ベイスターズ')) return 'bg-sky-500 text-white border-sky-600';
-  if (clean.includes('ヤクルト') || clean.includes('スワローズ')) return 'bg-slate-800 text-white border-slate-900';
+  // 🟢 ヤクルト ➔ 黄緑色のボックスに黒文字カスタム
+  if (clean.includes('ヤクルト') || clean.includes('スワローズ')) return 'bg-lime-500 text-black border-lime-600';
   if (clean.includes('広島') || clean.includes('カープ')) return 'bg-red-600 text-white border-red-700';
   if (clean.includes('ソフトバンク') || clean.includes('ホークス')) return 'bg-amber-400 text-black border-amber-500';
   if (clean.includes('ロッテ') || clean.includes('マリーンズ')) return 'bg-zinc-700 text-white border-zinc-800';
-  if (clean.includes('オリックス') || clean.includes('バファローズ')) return 'bg-amber-700 text-white border-amber-800';
+  // 🔵 オリックス ➔ ネイビーボックスに金文字カスタム
+  if (clean.includes('オリックス') || clean.includes('バファローズ')) return 'bg-blue-950 text-amber-400 border-amber-600';
   if (clean.includes('日本ハム') || clean.includes('日ハム') || clean.includes('ファイターズ')) return 'bg-cyan-600 text-white border-cyan-700';
   if (clean.includes('西武') || clean.includes('ライオンズ')) return 'bg-indigo-900 text-white border-indigo-950';
   if (clean.includes('楽天') || clean.includes('ゴールデンイーグルス')) return 'bg-rose-800 text-white border-rose-900';
@@ -211,7 +213,7 @@ function SalariesRankingContent() {
         salaryRecords.forEach(sal => {
           const sId = sal.player_id ? String(sal.player_id).trim().padStart(8, '0') : '';
           const sYear = Number(sal.year);
-          const rawSalTeam = sal.team_name || ''; // 💡 ここをしっかり補正定義してエラーを完全破壊！
+          const rawSalTeam = sal.team_name || '';
           let searchName = sal.player_name ? sal.player_name.trim() : '';
 
           if (searchName.includes('ドミンゴ') && (rawSalTeam.includes('ヤクルト') || rawSalTeam.includes('スワローズ'))) {
