@@ -43,13 +43,13 @@ const getTeamColorClass = (teamName: string): string => {
   if (clean.includes('阪神') || clean.includes('タイガース')) return 'bg-yellow-400 text-black border-yellow-500';
   if (clean.includes('中日') || clean.includes('ドラゴンズ')) return 'bg-blue-600 text-white border-blue-700';
   if (clean.includes('DeNA') || clean.includes('横浜') || clean.includes('ベイスターズ')) return 'bg-sky-500 text-white border-sky-600';
-  // 🟢 ヤクルト ➔ 黄緑色のボックスに黒文字カスタム（維持）
+  // 🟢 ヤクルト ➔ 黄緑色のボックスに黒文字
   if (clean.includes('ヤクルト') || clean.includes('スワローズ')) return 'bg-lime-500 text-black border-lime-600';
   if (clean.includes('広島') || clean.includes('カープ')) return 'bg-red-600 text-white border-red-700';
   if (clean.includes('ソフトバンク') || clean.includes('ホークス')) return 'bg-amber-400 text-black border-amber-500';
   if (clean.includes('ロッテ') || clean.includes('マリーンズ')) return 'bg-zinc-700 text-white border-zinc-800';
-  // 🔵 オリックス ➔ ネイビーボックスに金文字カスタム（維持）
-  if (clean.includes('オリックス') || clean.includes('バファローズ')) return 'bg-blue-950 text-amber-400 border-amber-600';
+  // 🔵 オリックス ➔ ネイビーボックスに金文字（💡 不要な外枠線を排除して完全美化！）
+  if (clean.includes('オリックス') || clean.includes('バファローズ')) return 'bg-blue-950 text-amber-400 border-blue-950';
   if (clean.includes('日本ハム') || clean.includes('日ハム') || clean.includes('ファイターズ')) return 'bg-cyan-600 text-white border-cyan-700';
   if (clean.includes('西武') || clean.includes('ライオンズ')) return 'bg-indigo-900 text-white border-indigo-950';
   if (clean.includes('楽天') || clean.includes('ゴールデンイーグルス')) return 'bg-rose-800 text-white border-rose-900';
@@ -201,8 +201,7 @@ function SalariesRankingContent() {
           const sId = sal.player_id ? String(sal.player_id).trim().padStart(8, '0') : '';
           const sYear = Number(sal.year);
 
-          // 💡【究極のシンプル化】：過去のあいまいな名前名寄せロジック・文字列クレンジング・ドミンゴ個別置換コードは1行残らずすべて撤去！
-          // クリーンになったデータベースの「現役選手ID」のみを全面信頼し、Mapから1発で一本釣りJOINを行います。
+          // 💡 クリーンになったデータベースの「現役選手ID」のみを全面信頼し、Mapから一本釣りJOIN
           const matchedPlayer = masterIdMap.get(sId);
 
           const finalName = matchedPlayer ? matchedPlayer.player_name : (sal.player_name || '不明');
@@ -222,7 +221,7 @@ function SalariesRankingContent() {
           const statB = bMap.get(lookupKey);
           const statP = pMap.get(lookupKey);
 
-          // 💡 マスタの守備位置（finalPos）に「投手」という文言が入っているかどうか『だけ』で、100%正確にポジションを断定！
+          // マスタの守備位置（finalPos）に「投手」という文言が入っているかどうかだけで100%正確にポジションを断定
           const isPitcherRole = finalPos.includes('投手');
           const currentRole: 'hitter' | 'pitcher' = isPitcherRole ? 'pitcher' : 'hitter';
 
