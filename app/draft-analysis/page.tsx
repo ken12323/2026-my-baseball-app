@@ -15,24 +15,40 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
   const mainTab = typeof resolvedParams.tab === 'string' ? resolvedParams.tab : 'roots';
   const subCategory = typeof resolvedParams.sub === 'string' ? resolvedParams.sub : 'all';
 
-  // Supabaseからのデータ取得処理（現状実装済みのViewから取得）
+  // Supabaseからのデータ取得処理
   let displayData: any[] = [];
-  let fetchError = null;
+  let fetchError: any = null;
 
-  if (mainTab === 'roots' && subCategory === 'all') {
-    const { data, error } = await supabase
-      .from('draft_route_stats')
-      .select('*')
-      .order('avghr', { ascending: false });
-    displayData = data || [];
-    fetchError = error;
-  } else if (mainTab === 'round') {
-    const { data, error } = await supabase
-      .from('draft_round_stats')
-      .select('*')
-      .order('avghr', { ascending: false });
-    displayData = data || [];
-    fetchError = error;
+  try {
+    if (mainTab === 'roots') {
+      if (subCategory === 'pos_origin') {
+        // 🎯 ポジション×出身データ
+        const { data, error } = await supabase
+          .from('draft_pos_origin_stats')
+          .select('*')
+          .order('war', { ascending: false });
+        displayData = data || [];
+        fetchError = error;
+      } else {
+        // 🌱 経歴ルート大枠（デフォルト）
+        const { data, error } = await supabase
+          .from('draft_route_stats')
+          .select('*')
+          .order('avghr', { ascending: false });
+        displayData = data || [];
+        fetchError = error;
+      }
+    } else if (mainTab === 'round') {
+      // 📊 順位・指名史データ
+      const { data, error } = await supabase
+        .from('draft_round_stats')
+        .select('*')
+        .order('avghr', { ascending: false });
+      displayData = data || [];
+      fetchError = error;
+    }
+  } catch (err) {
+    fetchError = err;
   }
 
   return (
@@ -48,7 +64,7 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
         </p>
       </div>
 
-      {/* 2. メイン4大タブ（パワプロ風高コントラストデザイン） */}
+      {/* 2. メイン4大タブ */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
         <Link
           href="/draft-analysis?tab=roots&sub=all"
@@ -92,7 +108,7 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
         </Link>
       </div>
 
-      {/* 3. サブカテゴリー切り替え（チップ型Pillボタン） */}
+      {/* 3. サブカテゴリー切り替え */}
       <div className="flex space-x-2 mb-6 overflow-x-auto pb-2 no-scrollbar">
         {mainTab === 'roots' && (
           <>
@@ -128,73 +144,87 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
         )}
       </div>
 
-      {/* 4. ハイライト発見バナー（UX向上） */}
+      {/* 4. ハイライト発見バナー */}
       <div className="bg-amber-400 border-2 border-amber-500 rounded-2xl p-4 mb-6 shadow-md transform -rotate-0.5">
         <div className="flex items-start space-x-3">
           <span className="text-2xl">💡</span>
           <div>
             <h3 className="font-black text-slate-950 text-sm md:text-base mb-1">
-              {mainTab === 'roots' && '【ルーツ検証】「高卒スラッガー」と「大卒即戦力」の現在地'}
-              {mainTab === 'round' && '【指名史検証】ドラフト1位・2位指名選手が占める主力を分析'}
+              {mainTab === 'roots' && subCategory === 'pos_origin' && '【ポジション×出身大学】どの大学のどのポジションがプロで最も大成（WAR）しているか？'}
+              {mainTab === 'roots' && subCategory === 'all' && '【ルーツ検証】「高卒スラッガー」と「大卒即戦力」の現在地'}
+              {mainTab === 'round' && '【指名史検証】ドラフト順位とプロ入り後の活躍期待値の相関'}
               {mainTab === 'team' && '【球団編成検証】チームの核（エース・主砲）の自前育成比率'}
               {mainTab === 'attribute' && '【属性検証】体格（BMI）・誕生月・投打の組み合わせから探る黄金比'}
             </h3>
             <p className="text-xs text-slate-900 font-bold leading-relaxed">
-              タブやサブメニューを切り替えることで、様々な文脈からプロ野球選手のルーツと活躍の相関関係を検証できます。
+              各種テーマを選択して、プロ野球選手のデータ分析を深掘りできます。
             </p>
           </div>
         </div>
       </div>
 
-      {/* 5. エラーログまたはメインコンテンツ */}
+      {/* 5. データ表示エリア */}
       {fetchError ? (
-        <div className="p-6 bg-red-50 border-2 border-red-300 rounded-2xl text-red-600 font-bold">
-          データの取得に失敗しました。
+        <div className="p-6 bg-red-50 border-2 border-red-300 rounded-2xl text-red-600 font-bold text-xs">
+          ❌ データの取得に失敗しました：{JSON.stringify(fetchError)}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6">
-          
-          {/* 既存のデータベースから取得した実データ（またはUIモック検証エリア） */}
           <div className="bg-white border-2 border-slate-200 rounded-2xl p-4 md:p-6 shadow-md">
             <h2 className="text-base md:text-lg font-black mb-4 bg-blue-600 text-white inline-block px-3 py-1 rounded-lg transform rotate-0.5 shadow-sm">
-              📊 データ集計一覧：
-              {mainTab === 'roots' && '経歴ルーツ'}
-              {mainTab === 'round' && 'ドラフト順位別'}
-              {mainTab === 'team' && '球団・育成分析'}
-              {mainTab === 'attribute' && '属性分析'}
+              📊 集計結果：
+              {mainTab === 'roots' && subCategory === 'pos_origin' && 'ポジション × 出身大学 ランキング'}
+              {mainTab === 'roots' && subCategory === 'all' && '経歴ルート大枠'}
+              {mainTab === 'round' && 'ドラフト順位別・期待値'}
+              {mainTab === 'team' && '球団・育成力分析（準備中）'}
+              {mainTab === 'attribute' && '属性・マニアック分析（準備中）'}
             </h2>
 
-            {/* テーブル（モバイルファースト・横スクロール） */}
+            {/* テーブル */}
             <div className="overflow-x-auto -mx-4 px-4">
               <table className="w-full text-left border-collapse min-w-[500px]">
                 <thead>
                   <tr className="bg-slate-800 text-white text-xs md:text-sm">
-                    <th className="p-3 rounded-l-xl font-bold">区分・項目</th>
+                    <th className="p-3 rounded-l-xl font-bold">
+                      {subCategory === 'pos_origin' ? 'ポジション × 出身大学' : mainTab === 'round' ? 'ドラフト順位' : '区分・項目'}
+                    </th>
                     <th className="p-3 font-bold text-right">該当選手数</th>
-                    <th className="p-3 font-bold text-right">グループ合計本塁打</th>
-                    <th className="p-3 font-bold text-right">グループ合計安打</th>
-                    <th className="p-3 rounded-r-xl font-bold text-right">1人平均本塁打</th>
+                    <th className="p-3 font-bold text-right">通算本塁打</th>
+                    <th className="p-3 font-bold text-right">通算安打</th>
+                    <th className="p-3 rounded-r-xl font-bold text-right">
+                      {subCategory === 'pos_origin' ? '通算合計WAR' : '1人平均本塁打'}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {displayData.length > 0 ? (
                     displayData.map((item, idx) => {
-                      const rowTitle = item.route ? item.route : `${item.round}指名`;
+                      // 表示タイトルの安全性チェック
+                      let rowTitle = '不明';
+                      if (subCategory === 'pos_origin' && item.position) {
+                        rowTitle = `${item.position} （${item.origin}）`;
+                      } else if (item.route) {
+                        rowTitle = item.route;
+                      } else if (item.round) {
+                        rowTitle = `${item.round}指名`;
+                      }
+
                       return (
                         <tr key={idx} className="border-b-2 border-slate-100 hover:bg-slate-50 text-xs md:text-sm font-bold text-slate-700">
                           <td className="p-3 text-slate-900 font-black">{rowTitle}</td>
-                          <td className="p-3 text-right">{item.players}人</td>
-                          <td className="p-3 text-right text-amber-600 font-extrabold">{Number(item.hr).toLocaleString()}本</td>
-                          <td className="p-3 text-right">{Number(item.hits).toLocaleString()}安打</td>
-                          <td className="p-3 text-right text-blue-600 font-black text-base">{item.avghr}本</td>
+                          <td className="p-3 text-right">{item.players ?? 0}人</td>
+                          <td className="p-3 text-right text-amber-600 font-extrabold">{Number(item.hr ?? 0).toLocaleString()}本</td>
+                          <td className="p-3 text-right">{Number(item.hits ?? 0).toLocaleString()}安打</td>
+                          <td className="p-3 text-right text-blue-600 font-black text-base">
+                            {item.war !== undefined ? item.war : `${item.avghr ?? 0}本`}
+                          </td>
                         </tr>
                       );
                     })
                   ) : (
                     <tr>
                       <td colSpan={5} className="p-8 text-center text-slate-400 font-bold text-sm">
-                        ⚙️ 「{mainTab} / {subCategory}」 のデータビューを順次紐付け準備中です！<br/>
-                        上のタブをクリックして操作感や切り替えレスポンスをご確認ください。
+                        ⚙️ 「{mainTab} / {subCategory}」 のデータビューを順次紐付け準備中です！
                       </td>
                     </tr>
                   )}
@@ -202,7 +232,6 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
               </table>
             </div>
           </div>
-
         </div>
       )}
 
