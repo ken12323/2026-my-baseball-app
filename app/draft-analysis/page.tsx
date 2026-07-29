@@ -14,6 +14,7 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
   // URLパラメータからの状態取得（デフォルト設定）
   const mainTab = typeof resolvedParams.tab === 'string' ? resolvedParams.tab : 'roots';
   const subCategory = typeof resolvedParams.sub === 'string' ? resolvedParams.sub : 'all';
+  const eraFilter = typeof resolvedParams.era === 'string' ? resolvedParams.era : 'active';
 
   // Supabaseからのデータ取得処理
   let displayData: any[] = [];
@@ -22,10 +23,11 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
   try {
     if (mainTab === 'roots') {
       if (subCategory === 'pos_origin') {
-        // 🎯 ポジション×出身データ
+        // 🎯 ポジション×出身データ（年代フィルター適用）
         const { data, error } = await supabase
           .from('draft_pos_origin_stats')
           .select('*')
+          .eq('era_type', eraFilter)
           .order('war', { ascending: false });
         displayData = data || [];
         fetchError = error;
@@ -109,7 +111,7 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
       </div>
 
       {/* 3. サブカテゴリー切り替え */}
-      <div className="flex space-x-2 mb-6 overflow-x-auto pb-2 no-scrollbar">
+      <div className="flex space-x-2 mb-4 overflow-x-auto pb-2 no-scrollbar">
         {mainTab === 'roots' && (
           <>
             <Link href="/draft-analysis?tab=roots&sub=all" className={`px-3 py-1.5 rounded-full text-xs font-extrabold whitespace-nowrap ${subCategory === 'all' ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-700'}`}>🌱 経歴ルート大枠</Link>
@@ -144,13 +146,74 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
         )}
       </div>
 
-      {/* 4. ハイライト発見バナー */}
+      {/* 🌟 4. 年代・対象フィルター（ポジション×出身時のみ表示） */}
+      {mainTab === 'roots' && subCategory === 'pos_origin' && (
+        <div className="bg-slate-200/80 p-2.5 rounded-2xl mb-6 flex items-center space-x-2 overflow-x-auto no-scrollbar">
+          <span className="text-xs font-black text-slate-700 px-2 shrink-0">⏳ 対象区分:</span>
+          <Link
+            href="/draft-analysis?tab=roots&sub=pos_origin&era=active"
+            className={`px-3 py-1 rounded-xl text-xs font-black transition-all ${
+              eraFilter === 'active'
+                ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-300'
+                : 'bg-white text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            🌱 現役のみ（4区分）
+          </Link>
+          <Link
+            href="/draft-analysis?tab=roots&sub=pos_origin&era=2020"
+            className={`px-3 py-1 rounded-xl text-xs font-black transition-all ${
+              eraFilter === '2020'
+                ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-300'
+                : 'bg-white text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            ⚡ 2020年〜（2区分）
+          </Link>
+          <Link
+            href="/draft-analysis?tab=roots&sub=pos_origin&era=2010"
+            className={`px-3 py-1 rounded-xl text-xs font-black transition-all ${
+              eraFilter === '2010'
+                ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-300'
+                : 'bg-white text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            🔥 2010年〜（2区分）
+          </Link>
+          <Link
+            href="/draft-analysis?tab=roots&sub=pos_origin&era=2000"
+            className={`px-3 py-1 rounded-xl text-xs font-black transition-all ${
+              eraFilter === '2000'
+                ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-300'
+                : 'bg-white text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            🏛️ 2000年〜（2区分）
+          </Link>
+          <Link
+            href="/draft-analysis?tab=roots&sub=pos_origin&era=all"
+            className={`px-3 py-1 rounded-xl text-xs font-black transition-all ${
+              eraFilter === 'all'
+                ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-300'
+                : 'bg-white text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            🌐 全選手・引退含む（2区分）
+          </Link>
+        </div>
+      )}
+
+      {/* 5. ハイライト発見バナー */}
       <div className="bg-amber-400 border-2 border-amber-500 rounded-2xl p-4 mb-6 shadow-md transform -rotate-0.5">
         <div className="flex items-start space-x-3">
           <span className="text-2xl">💡</span>
           <div>
             <h3 className="font-black text-slate-950 text-sm md:text-base mb-1">
-              {mainTab === 'roots' && subCategory === 'pos_origin' && '【ポジション×出身大学】どの大学のどのポジションがプロで最も大成（WAR）しているか？'}
+              {mainTab === 'roots' && subCategory === 'pos_origin' && (
+                eraFilter === 'active'
+                  ? '【現役選手】ポジション（投手・捕手・内野・外野）× 出身大学の活躍度（WAR）'
+                  : `【${eraFilter === 'all' ? '全選手・引退含む' : `${eraFilter}年以降入団`}】ポジション（投手・野手）× 出身大学の通算貢献度（WAR）`
+              )}
               {mainTab === 'roots' && subCategory === 'all' && '【ルーツ検証】「高卒スラッガー」と「大卒即戦力」の現在地'}
               {mainTab === 'round' && '【指名史検証】ドラフト順位とプロ入り後の活躍期待値の相関'}
               {mainTab === 'team' && '【球団編成検証】チームの核（エース・主砲）の自前育成比率'}
@@ -163,7 +226,7 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
         </div>
       </div>
 
-      {/* 5. データ表示エリア */}
+      {/* 6. データ表示エリア */}
       {fetchError ? (
         <div className="p-6 bg-red-50 border-2 border-red-300 rounded-2xl text-red-600 font-bold text-xs">
           ❌ データの取得に失敗しました：{JSON.stringify(fetchError)}
@@ -173,7 +236,9 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
           <div className="bg-white border-2 border-slate-200 rounded-2xl p-4 md:p-6 shadow-md">
             <h2 className="text-base md:text-lg font-black mb-4 bg-blue-600 text-white inline-block px-3 py-1 rounded-lg transform rotate-0.5 shadow-sm">
               📊 集計結果：
-              {mainTab === 'roots' && subCategory === 'pos_origin' && 'ポジション × 出身大学 ランキング'}
+              {mainTab === 'roots' && subCategory === 'pos_origin' && (
+                eraFilter === 'active' ? '現役ポジション（4区分）× 出身大学' : `ポジション（投手・野手）× 出身大学 [${eraFilter === 'all' ? '全選手' : `${eraFilter}年〜`}]`
+              )}
               {mainTab === 'roots' && subCategory === 'all' && '経歴ルート大枠'}
               {mainTab === 'round' && 'ドラフト順位別・期待値'}
               {mainTab === 'team' && '球団・育成力分析（準備中）'}
@@ -199,14 +264,7 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
                 <tbody>
                   {displayData.length > 0 ? (
                     displayData.map((item, idx) => {
-                      // title が NULL または空の場合の絶対ガード処理
-                      let rowTitle = item.title && item.title !== '' ? item.title : item.route;
-                      if (!rowTitle && item.round) {
-                        rowTitle = `${item.round}指名`;
-                      }
-                      if (!rowTitle) {
-                        rowTitle = '該当ポジション';
-                      }
+                      const rowTitle = item.title || item.route || (item.round ? `${item.round}指名` : '該当ポジション');
 
                       return (
                         <tr key={idx} className="border-b-2 border-slate-100 hover:bg-slate-50 text-xs md:text-sm font-bold text-slate-700">
