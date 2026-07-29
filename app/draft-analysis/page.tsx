@@ -199,12 +199,19 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
                 <tbody>
                   {displayData.length > 0 ? (
                     displayData.map((item, idx) => {
-                      // 🌟 表示タイトルの完全自動取得（title, route, roundを順に参照）
                       const rowTitle = item.title || item.route || (item.round ? `${item.round}指名` : 'データなし');
 
                       return (
                         <tr key={idx} className="border-b-2 border-slate-100 hover:bg-slate-50 text-xs md:text-sm font-bold text-slate-700">
-                          <td className="p-3 text-slate-900 font-black">{rowTitle}</td>
+                          <td className="p-3 text-slate-900 font-black">
+                            <div>{rowTitle}</div>
+                            {/* 🌟 活躍選手（TOP3）サブ表示 */}
+                            {item.top_players && (
+                              <div className="text-[11px] text-slate-500 font-normal mt-0.5">
+                                👑 {item.top_players}
+                              </div>
+                            )}
+                          </td>
                           <td className="p-3 text-right">{item.players ?? 0}人</td>
                           <td className="p-3 text-right text-amber-600 font-extrabold">{Number(item.hr ?? 0).toLocaleString()}本</td>
                           <td className="p-3 text-right">{Number(item.hits ?? 0).toLocaleString()}安打</td>
