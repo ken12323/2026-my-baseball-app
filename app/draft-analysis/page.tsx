@@ -199,15 +199,8 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
                 <tbody>
                   {displayData.length > 0 ? (
                     displayData.map((item, idx) => {
-                      // 表示タイトルの安全性チェック
-                      let rowTitle = '不明';
-                      if (subCategory === 'pos_origin' && item.position) {
-                        rowTitle = `${item.position} （${item.origin}）`;
-                      } else if (item.route) {
-                        rowTitle = item.route;
-                      } else if (item.round) {
-                        rowTitle = `${item.round}指名`;
-                      }
+                      // 🌟 表示タイトルの完全自動取得（title, route, roundを順に参照）
+                      const rowTitle = item.title || item.route || (item.round ? `${item.round}指名` : 'データなし');
 
                       return (
                         <tr key={idx} className="border-b-2 border-slate-100 hover:bg-slate-50 text-xs md:text-sm font-bold text-slate-700">
