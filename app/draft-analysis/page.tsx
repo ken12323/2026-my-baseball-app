@@ -199,13 +199,20 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
                 <tbody>
                   {displayData.length > 0 ? (
                     displayData.map((item, idx) => {
-                      const rowTitle = item.title || item.route || (item.round ? `${item.round}指名` : 'データなし');
+                      // title が NULL または空の場合の絶対ガード処理
+                      let rowTitle = item.title && item.title !== '' ? item.title : item.route;
+                      if (!rowTitle && item.round) {
+                        rowTitle = `${item.round}指名`;
+                      }
+                      if (!rowTitle) {
+                        rowTitle = '該当ポジション';
+                      }
 
                       return (
                         <tr key={idx} className="border-b-2 border-slate-100 hover:bg-slate-50 text-xs md:text-sm font-bold text-slate-700">
                           <td className="p-3 text-slate-900 font-black">
                             <div>{rowTitle}</div>
-                            {/* 🌟 活躍選手（TOP3）サブ表示 */}
+                            {/* 🌟 活躍選手（TOP3）表示 */}
                             {item.top_players && (
                               <div className="text-[11px] text-slate-500 font-normal mt-0.5">
                                 👑 {item.top_players}
