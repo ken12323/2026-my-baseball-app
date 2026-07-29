@@ -11,54 +11,56 @@ type Props = {
 export default async function DraftAnalysisPage({ searchParams }: Props) {
   const resolvedParams = await searchParams;
   
-  // URLパラメータからの状態取得
   const mainTab = typeof resolvedParams.tab === 'string' ? resolvedParams.tab : 'roots';
   const subCategory = typeof resolvedParams.sub === 'string' ? resolvedParams.sub : 'all';
   const eraFilter = typeof resolvedParams.era === 'string' ? resolvedParams.era : 'active';
   const sortKey = typeof resolvedParams.sort === 'string' ? resolvedParams.sort : 'war';
 
-  // ソートキーと表示設定のマップ
-  const sortColumnMap: Record<string, { column: string; ascending: boolean; label: string; unit: string }> = {
-    war: { column: 'war', ascending: false, label: '通算合計WAR', unit: '' },
-    hr: { column: 'hr', ascending: false, label: '通算本塁打', unit: '本' },
-    hits: { column: 'hits', ascending: false, label: '通算安打', unit: '安打' },
-    wrc_plus: { column: 'wrc_plus', ascending: false, label: '平均wRC+', unit: '' },
-    ops: { column: 'ops', ascending: false, label: '平均OPS', unit: '' },
-    wins: { column: 'wins', ascending: false, label: '通算勝利', unit: '勝' },
-    ip: { column: 'ip', ascending: false, label: '通算投球回', unit: '回' },
-    fip: { column: 'fip', ascending: true, label: '平均FIP', unit: '' }, // FIPは低数値が良
-    k_bb: { column: 'k_bb', ascending: false, label: '平均K-BB%', unit: '%' },
+  // 🌟 ソート設定マップ（type で 野手専用・投手専用 を定義）
+  const sortColumnMap: Record<string, { column: string; ascending: boolean; label: string; unit: string; type: 'all' | 'batter' | 'pitcher' }> = {
+    war: { column: 'war', ascending: false, label: '通算合計WAR', unit: '', type: 'all' },
+    hr: { column: 'hr', ascending: false, label: '通算本塁打', unit: '本', type: 'batter' },
+    hits: { column: 'hits', ascending: false, label: '通算安打', unit: '安打', type: 'batter' },
+    wrc_plus: { column: 'wrc_plus', ascending: false, label: '平均wRC+', unit: '', type: 'batter' },
+    ops: { column: 'ops', ascending: false, label: '平均OPS', unit: '', type: 'batter' },
+    wins: { column: 'wins', ascending: false, label: '通算勝利', unit: '勝', type: 'pitcher' },
+    ip: { column: 'ip', ascending: false, label: '通算投球回', unit: '回', type: 'pitcher' },
+    fip: { column: 'fip', ascending: true, label: '平均FIP', unit: '', type: 'pitcher' }, // FIPは低数値が良
+    k_bb: { column: 'k_bb', ascending: false, label: '平均K-BB%', unit: '%', type: 'pitcher' },
   };
 
   const currentSort = sortColumnMap[sortKey] || sortColumnMap.war;
 
-  // Supabaseからのデータ取得処理
   let displayData: any[] = [];
   let fetchError: any = null;
 
   try {
     if (mainTab === 'roots') {
       if (subCategory === 'pos_origin') {
-        const { data, error } = await supabase
-          .from('draft_pos_origin_stats')
-          .select('*')
-          .eq('era_type', eraFilter)
-          .order(currentSort.column, { ascending: currentSort.ascending, nullsFirst: false });
+        let query = supabase.from('draft_pos_origin_stats').select('*').eq('era_type', eraFilter);
+
+        // 🎯 選択した指標が野手専用なら投手を排除、投手専用なら野手を排除！
+        if (currentSort.type === 'batter') {
+          query = query.neq('pos_category', '投手');
+        } else if (currentSort.type === 'pitcher') {
+          query = query.eq('pos_category', '投手');
+        }
+
+        // FIPの昇順ソート時に、0や未計算の選手が1位にならないよう0より大きいデータに限定
+        if (sortKey === 'fip') {
+          query = query.gt('fip', 0);
+        }
+
+        const { data, error } = await query.order(currentSort.column, { ascending: currentSort.ascending, nullsFirst: false });
         displayData = data || [];
         fetchError = error;
       } else {
-        const { data, error } = await supabase
-          .from('draft_route_stats')
-          .select('*')
-          .order('avghr', { ascending: false });
+        const { data, error } = await supabase.from('draft_route_stats').select('*').order('avghr', { ascending: false });
         displayData = data || [];
         fetchError = error;
       }
     } else if (mainTab === 'round') {
-      const { data, error } = await supabase
-        .from('draft_round_stats')
-        .select('*')
-        .order('avghr', { ascending: false });
+      const { data, error } = await supabase.from('draft_round_stats').select('*').order('avghr', { ascending: false });
       displayData = data || [];
       fetchError = error;
     }
@@ -66,7 +68,6 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
     fetchError = err;
   }
 
-  // 補助関数: クエリ文字列作成
   const buildUrl = (newEra?: string, newSort?: string) => {
     const era = newEra !== undefined ? newEra : eraFilter;
     const sort = newSort !== undefined ? newSort : sortKey;
@@ -78,14 +79,12 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
     const rawVal = item[currentSort.column];
     if (rawVal === undefined || rawVal === null) return '-';
     
-    if (currentSort.unit === '本' || currentSort.unit === '安打' || currentSort.unit === '勝') {
-      return `${Number(rawVal).toLocaleString()} ${currentSort.unit}`;
-    }
-    if (currentSort.unit === '回') {
-      return `${Number(rawVal).toLocaleString()} 回`;
+    // 小数やカンマを整えて単位をつける
+    if (currentSort.unit === '本' || currentSort.unit === '安打' || currentSort.unit === '勝' || currentSort.unit === '回') {
+      return `${Number(rawVal).toLocaleString()}${currentSort.unit}`;
     }
     if (currentSort.unit === '%') {
-      return `${rawVal}%`;
+      return `${rawVal}${currentSort.unit}`;
     }
     return rawVal;
   };
@@ -165,18 +164,18 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
           {/* 4.1 年代・対象フィルター */}
           <div className="flex items-center space-x-2 overflow-x-auto no-scrollbar">
             <span className="text-xs font-black text-slate-700 px-2 shrink-0">⏳ 対象区分:</span>
-            <Link href={buildUrl('active')} className={`px-3 py-1 rounded-xl text-xs font-black whitespace-nowrap transition-all ${eraFilter === 'active' ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-300' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>🌱 現役のみ（4区分）</Link>
-            <Link href={buildUrl('2020')} className={`px-3 py-1 rounded-xl text-xs font-black whitespace-nowrap transition-all ${eraFilter === '2020' ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-300' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>⚡ 2020年〜（2区分）</Link>
-            <Link href={buildUrl('2010')} className={`px-3 py-1 rounded-xl text-xs font-black whitespace-nowrap transition-all ${eraFilter === '2010' ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-300' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>🔥 2010年〜（2区分）</Link>
-            <Link href={buildUrl('2000')} className={`px-3 py-1 rounded-xl text-xs font-black whitespace-nowrap transition-all ${eraFilter === '2000' ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-300' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>🏛️ 2000年〜（2区分）</Link>
-            <Link href={buildUrl('all')} className={`px-3 py-1 rounded-xl text-xs font-black whitespace-nowrap transition-all ${eraFilter === 'all' ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-300' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>🌐 全選手・引退含む（2区分）</Link>
+            <Link href={buildUrl('active')} className={`px-3 py-1 rounded-xl text-xs font-black whitespace-nowrap transition-all ${eraFilter === 'active' ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-300' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>🌱 現役のみ</Link>
+            <Link href={buildUrl('2020')} className={`px-3 py-1 rounded-xl text-xs font-black whitespace-nowrap transition-all ${eraFilter === '2020' ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-300' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>⚡ 2020年〜</Link>
+            <Link href={buildUrl('2010')} className={`px-3 py-1 rounded-xl text-xs font-black whitespace-nowrap transition-all ${eraFilter === '2010' ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-300' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>🔥 2010年〜</Link>
+            <Link href={buildUrl('2000')} className={`px-3 py-1 rounded-xl text-xs font-black whitespace-nowrap transition-all ${eraFilter === '2000' ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-300' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>🏛️ 2000年〜</Link>
+            <Link href={buildUrl('all')} className={`px-3 py-1 rounded-xl text-xs font-black whitespace-nowrap transition-all ${eraFilter === 'all' ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-300' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>🌐 全選手（引退含）</Link>
           </div>
 
           {/* 4.2 表示・ソート指標切り替え */}
           <div className="flex items-center space-x-2 overflow-x-auto pt-2 border-t border-slate-300/60 no-scrollbar">
             <span className="text-xs font-black text-slate-700 px-2 shrink-0">📊 表示スタッツ:</span>
             
-            <Link href={buildUrl(undefined, 'war')} className={`px-2.5 py-1 rounded-lg text-[11px] font-black whitespace-nowrap transition-all ${sortKey === 'war' ? 'bg-slate-900 text-white shadow-sm' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>🏆 通算WAR</Link>
+            <Link href={buildUrl(undefined, 'war')} className={`px-2.5 py-1 rounded-lg text-[11px] font-black whitespace-nowrap transition-all ${sortKey === 'war' ? 'bg-slate-900 text-white shadow-sm' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>🏆 WAR (総合)</Link>
             
             <span className="text-slate-400 text-xs font-light">|</span>
             <Link href={buildUrl(undefined, 'hr')} className={`px-2.5 py-1 rounded-lg text-[11px] font-black whitespace-nowrap transition-all ${sortKey === 'hr' ? 'bg-amber-600 text-white shadow-sm' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>💥 本塁打</Link>
@@ -187,29 +186,13 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
             <span className="text-slate-400 text-xs font-light">|</span>
             <Link href={buildUrl(undefined, 'wins')} className={`px-2.5 py-1 rounded-lg text-[11px] font-black whitespace-nowrap transition-all ${sortKey === 'wins' ? 'bg-emerald-600 text-white shadow-sm' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>👑 勝利</Link>
             <Link href={buildUrl(undefined, 'ip')} className={`px-2.5 py-1 rounded-lg text-[11px] font-black whitespace-nowrap transition-all ${sortKey === 'ip' ? 'bg-emerald-600 text-white shadow-sm' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>投球回</Link>
-            <Link href={buildUrl(undefined, 'fip')} className={`px-2.5 py-1 rounded-lg text-[11px] font-black whitespace-nowrap transition-all ${sortKey === 'fip' ? 'bg-teal-600 text-white shadow-sm' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>⚡ FIP</Link>
+            <Link href={buildUrl(undefined, 'fip')} className={`px-2.5 py-1 rounded-lg text-[11px] font-black whitespace-nowrap transition-all ${sortKey === 'fip' ? 'bg-teal-600 text-white shadow-sm' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>⚡ FIP (昇順)</Link>
             <Link href={buildUrl(undefined, 'k_bb')} className={`px-2.5 py-1 rounded-lg text-[11px] font-black whitespace-nowrap transition-all ${sortKey === 'k_bb' ? 'bg-teal-600 text-white shadow-sm' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>🔥 K-BB%</Link>
           </div>
         </div>
       )}
 
-      {/* 5. ハイライト発見バナー */}
-      <div className="bg-amber-400 border-2 border-amber-500 rounded-2xl p-4 mb-6 shadow-md transform -rotate-0.5">
-        <div className="flex items-start space-x-3">
-          <span className="text-2xl">💡</span>
-          <div>
-            <h3 className="font-black text-slate-950 text-sm md:text-base mb-1">
-              【{currentSort.label} ランキング】
-              {eraFilter === 'active' ? '現役選手' : eraFilter === 'all' ? '全選手' : `${eraFilter}年〜`} のポジション×出身
-            </h3>
-            <p className="text-xs text-slate-900 font-bold leading-relaxed">
-              選択した「{currentSort.label}」の成績順にシンプルに並び替えて表示しています。
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* 6. データ表示エリア（極めてシンプルで読みやすい3列構成） */}
+      {/* 5. データ表示エリア（極限まで削ぎ落とした3列構成！） */}
       {fetchError ? (
         <div className="p-6 bg-red-50 border-2 border-red-300 rounded-2xl text-red-600 font-bold text-xs">
           ❌ データの取得に失敗しました：{JSON.stringify(fetchError)}
@@ -217,9 +200,12 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
       ) : (
         <div className="grid grid-cols-1 gap-6">
           <div className="bg-white border-2 border-slate-200 rounded-2xl p-4 md:p-6 shadow-md">
-            <h2 className="text-base md:text-lg font-black mb-4 bg-blue-600 text-white inline-block px-3 py-1 rounded-lg transform rotate-0.5 shadow-sm">
-              📊 ランキング：{currentSort.label}
-            </h2>
+            
+            {mainTab === 'roots' && subCategory === 'pos_origin' && (
+              <h2 className="text-base md:text-lg font-black mb-4 bg-blue-600 text-white inline-block px-3 py-1 rounded-lg transform rotate-0.5 shadow-sm">
+                📊 {currentSort.label} ランキング
+              </h2>
+            )}
 
             {/* テーブル */}
             <div className="overflow-x-auto -mx-4 px-4">
@@ -227,14 +213,16 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
                 <thead>
                   <tr className="bg-slate-800 text-white text-xs md:text-sm">
                     <th className="p-3 rounded-l-xl font-bold">ポジション × 出身大学</th>
-                    <th className="p-3 font-bold text-center w-24">該当人数</th>
-                    <th className="p-3 rounded-r-xl font-bold text-right w-36">{currentSort.label}</th>
+                    <th className="p-3 font-bold text-center w-20">該当人数</th>
+                    <th className="p-3 rounded-r-xl font-black text-right w-28 text-blue-300 bg-slate-700/50">
+                      {currentSort.label}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {displayData.length > 0 ? (
                     displayData.map((item, idx) => {
-                      const rowTitle = item.title || '該当ポジション';
+                      const rowTitle = item.title || '該当データなし';
 
                       return (
                         <tr key={idx} className="border-b-2 border-slate-100 hover:bg-slate-50 text-xs md:text-sm font-bold text-slate-700">
@@ -251,8 +239,8 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
                           {/* カラム2: 人数 */}
                           <td className="p-3 text-center text-slate-600">{item.players ?? 0}人</td>
 
-                          {/* カラム3: 選択した項目だけの数値（強調表示） */}
-                          <td className="p-3 text-right text-blue-600 font-black text-base md:text-lg">
+                          {/* カラム3: 選択した項目だけの数値（ドーンと強調） */}
+                          <td className="p-3 text-right text-blue-600 font-black text-lg md:text-xl bg-blue-50/50">
                             {renderSortValue(item)}
                           </td>
                         </tr>
@@ -261,7 +249,7 @@ export default async function DraftAnalysisPage({ searchParams }: Props) {
                   ) : (
                     <tr>
                       <td colSpan={3} className="p-8 text-center text-slate-400 font-bold text-sm">
-                        ⚙️ データ取得中または紐付け準備中です！
+                        ⚙️ データがありません。条件を変更してください。
                       </td>
                     </tr>
                   )}
