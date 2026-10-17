@@ -2,18 +2,6 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { createClient } from "@supabase/supabase-js";
-import { 
-  GraduationCap, 
-  Trophy, 
-  Users, 
-  Sparkles,
-  ArrowUpDown,
-  Building2,
-  Medal,
-  GitFork,
-  Swords,
-  Target
-} from "lucide-react";
 
 // process の型エラー(ts2591)を回避する型宣言
 declare const process: any;
@@ -160,11 +148,11 @@ export default function DraftAnalysisPage() {
       <div className="bg-gradient-to-r from-blue-950 via-indigo-950 to-slate-950 text-white pt-10 pb-12 px-4 shadow-md">
         <div className="max-w-6xl mx-auto">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 border border-blue-400/30 text-blue-300 text-xs font-semibold mb-3">
-            <Sparkles className="w-3.5 h-3.5" />
+            <span>✨</span>
             プロ野球ドラフト戦略・ルーツ分析データベース
           </div>
           <h1 className="text-2xl md:text-4xl font-extrabold tracking-tight flex items-center gap-3">
-            <Trophy className="w-8 h-8 md:w-10 md:h-10 text-yellow-400" />
+            <span className="text-3xl md:text-4xl">🏆</span>
             DRAFT ANALYSIS
           </h1>
           <p className="mt-2 text-sm md:text-base text-slate-300">
@@ -182,7 +170,7 @@ export default function DraftAnalysisPage() {
               activeTab === "route" ? "bg-white text-blue-600 shadow-md" : "text-slate-600 hover:text-slate-900"
             }`}
           >
-            <GitFork className="w-4 h-4" /> 経歴ルート大枠
+            <span>🌱</span> 経歴ルート大枠
           </button>
           <button
             onClick={() => { setActiveTab("pos_origin"); setSortKey("war"); }}
@@ -190,7 +178,7 @@ export default function DraftAnalysisPage() {
               activeTab === "pos_origin" ? "bg-white text-blue-600 shadow-md" : "text-slate-600 hover:text-slate-900"
             }`}
           >
-            <GraduationCap className="w-4 h-4" /> ポジション×出身
+            <span>🎓</span> ポジション×出身
           </button>
           <button
             onClick={() => { setActiveTab("rank"); setSortKey("war"); }}
@@ -198,7 +186,7 @@ export default function DraftAnalysisPage() {
               activeTab === "rank" ? "bg-white text-blue-600 shadow-md" : "text-slate-600 hover:text-slate-900"
             }`}
           >
-            <Medal className="w-4 h-4" /> 指名順位別
+            <span>🏅</span> 指名順位別
           </button>
           <button
             onClick={() => { setActiveTab("team"); setSortKey("war"); }}
@@ -206,7 +194,7 @@ export default function DraftAnalysisPage() {
               activeTab === "team" ? "bg-white text-blue-600 shadow-md" : "text-slate-600 hover:text-slate-900"
             }`}
           >
-            <Building2 className="w-4 h-4" /> 球団別育成傾向
+            <span>🦅</span> 球団別育成傾向
           </button>
         </div>
 
@@ -280,19 +268,19 @@ export default function DraftAnalysisPage() {
                 <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-xl self-start md:self-auto">
                   <button
                     onClick={() => setViewMode("batter")}
-                    className={`flex items-center gap-1 px-3.5 py-1.5 text-xs md:text-sm font-bold rounded-lg transition-all ${
+                    className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all ${
                       viewMode === "batter" ? "bg-amber-500 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"
                     }`}
                   >
-                    <Swords className="w-3.5 h-3.5" /> ⚔️ 野手視点
+                    <span>⚔️</span> 野手視点
                   </button>
                   <button
                     onClick={() => setViewMode("pitcher")}
-                    className={`flex items-center gap-1 px-3.5 py-1.5 text-xs md:text-sm font-bold rounded-lg transition-all ${
+                    className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all ${
                       viewMode === "pitcher" ? "bg-emerald-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"
                     }`}
                   >
-                    <Target className="w-3.5 h-3.5" /> 🎯 投手視点
+                    <span>🎯</span> 投手視点
                   </button>
                 </div>
               )}
@@ -301,7 +289,7 @@ export default function DraftAnalysisPage() {
             {/* 下段：ソートボタンバー */}
             <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2">
               <span className="text-xs font-bold text-slate-500 mr-2 flex items-center gap-1">
-                <ArrowUpDown className="w-3.5 h-3.5" /> 並び替え:
+                <span>↕️</span> 並び替え:
               </span>
               <button
                 onClick={() => handleSort("war")}
@@ -441,7 +429,7 @@ export default function DraftAnalysisPage() {
                           {item.title}
                         </h2>
                         <span className="text-xs font-semibold text-slate-500 flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded-full">
-                          <Users className="w-3 h-3" /> {item.players}名
+                          <span>👥</span> {item.players}名
                         </span>
                       </div>
 
